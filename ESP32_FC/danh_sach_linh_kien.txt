@@ -1,0 +1,74 @@
+ESP32 WROOM32 38Pin
+ICM-20602
+Khung drone 5 inch
+Động Cơ Motor Không Chổi Than RS2205 2300KV Chạy 3s 4s
+2 cặp cánh 5 inch
+Pin lipo 2200mah 3s 75c
+Bộ Điều Khiển Bay M3 Chống Rung Kèm Ốc Vít Cố Định Bằng Cao Su VD Dành Cho CC3D FC FPV Racing Drone 12 cái
+Flywoo 5V/12V 2A BEC module V 2.0
+GOKU G55M 32BIT 128K 3-6S 55A ESC (30.5x30.5)BL32
+BMP388
+Mạch Thu Radiomaster RP3 ExpressLRS 2.4ghz 
+(Loại: ISM
+
+MCU: ESP8285
+
+Chip RF: SX1280IMLTRT
+
+Công suất RF từ xa: tối đa 100mw
+
+Ăng-ten: 65mm 2.4ghz T Ăng-ten x 2
+
+Dải tần số: 2400 MHz đến 2480 MHz
+
+Tốc độ làm mới nhận tối đa: 500Hz / F1000Hz
+
+Tốc độ làm mới máy thu tối thiểu: 25Hz
+
+Điện áp làm việc: 5v
+
+Trọng lượng: 4,6g (Bao gồm hai ăng ten)
+
+Kích thước: 22mm*13mm*4mm
+
+Phiên bản chương trình cơ sở: ExpressLRS v3.0 được cài đặt sẵn
+
+Mục tiêu FW: RadioMaster RP3 Đa dạng 2400 RX
+
+Giao diện xe buýt: CRSF)
+Tay Điều Khiển Pocket Crush Radio Controller (M2) | ELRS 2.4
+(THÔNG SỐ KỸ THUẬT
+
+• Kích thước gập: 156.6×65.1×125.3mm  
+
+• Kích thước mở: 156.6×73.1×154.8mm  
+
+• Trọng lượng: 288g  
+
+• Tần số hoạt động: 2.400GHz–2.480GHz  
+
+• Internal RF: ELRS 2.4GHz  
+
+• RF Power: 250mW Max (24dBm)  
+
+• Điện áp hoạt động: 6.6–8.4V DC  
+
+• Khoảng cách điều khiển: > 2km @20dBm  
+
+• Hệ điều hành: EdgeTX  
+
+• Số kênh: Tối đa 16 (tùy RX)  
+
+• Màn hình: LCD 128×64 đơn sắc  
+
+• Pin sử dụng: 2×18650 (không kèm)  
+
+• Sạc: USB-C QC3  
+
+• Firmware: Nâng cấp qua USB hoặc thẻ SD  
+
+• Gimbal: Hall-effect  
+
+• Module bay: Chuẩn Nano (Radiomaster Nano, TBS Nano Crossfire, Nano Tracer…)  )
+
+
