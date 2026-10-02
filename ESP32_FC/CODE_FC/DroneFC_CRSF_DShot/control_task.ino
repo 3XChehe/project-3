@@ -85,7 +85,7 @@ void control_task(void *parameter) {
     if (rc_ok) {
       if (rc_ch[CH_ARM] != 2) {
         armed = false;
-      } else if (arm_sw_prev != 2 && rc_ch[CH_THROTTLE] < 1050) {
+      } else if (arm_sw_prev != 2 && rc_ch[CH_THROTTLE] < 1150) {
         armed = true;
       }
       arm_sw_prev = rc_ch[CH_ARM];
@@ -131,10 +131,12 @@ void control_task(void *parameter) {
     }
 
     // ---------- 5. Mixer quad X và xuất ESC ----------
-    esc_1 = u_throttle - u_roll - u_pitch - u_yaw;
-    esc_2 = u_throttle + u_roll + u_pitch - u_yaw;
-    esc_3 = u_throttle + u_roll - u_pitch + u_yaw;
-    esc_4 = u_throttle - u_roll + u_pitch + u_yaw;
+    // Chiều quay thực tế lắp đặt: M1(CCW), M2(CCW), M3(CW), M4(CW)
+    // Ngược chuẩn Quad X nên đảo dấu u_yaw so với công thức gốc.
+    esc_1 = u_throttle - u_roll - u_pitch + u_yaw;   // M1 front-right CCW
+    esc_2 = u_throttle + u_roll + u_pitch + u_yaw;   // M2 rear-left   CCW
+    esc_3 = u_throttle + u_roll - u_pitch - u_yaw;   // M3 front-left  CW
+    esc_4 = u_throttle - u_roll + u_pitch - u_yaw;   // M4 rear-right  CW
     esc_clamp(esc_lim_lo, esc_lim_hi);
 
     if (!armed) { esc_1 = esc_2 = esc_3 = esc_4 = ESC_IDLE; }
@@ -151,10 +153,21 @@ void control_task(void *parameter) {
 // ============================================================================
 
 void mode_angle() {
-  u_throttle = rc_ch[CH_THROTTLE] * 0.8f;
-  u_roll  = pid_rate_roll (rate_roll_dps,  pid_tilt_roll (roll_deg,  roll_sp_deg));
-  u_pitch = pid_rate_pitch(rate_pitch_dps, pid_tilt_pitch(pitch_deg, pitch_sp_deg));
-  u_yaw   = pid_rate_yaw  (rate_yaw_dps,   yaw_rate_sp_dps);
+  // --- CODE GỐC ĐÃ ĐƯỢC ẨN ĐI ---
+  // u_throttle = rc_ch[CH_THROTTLE] * 0.8f;
+  // u_roll  = pid_rate_roll (rate_roll_dps,  pid_tilt_roll (roll_deg,  roll_sp_deg));
+  // u_pitch = pid_rate_pitch(rate_pitch_dps, pid_tilt_pitch(pitch_deg, pitch_sp_deg));
+  // u_yaw   = pid_rate_yaw  (rate_yaw_dps,   yaw_rate_sp_dps);
+
+  // --- CHẾ ĐỘ TEST MOTOR VÀ MIXER (BYPASS PID) ---
+  // Lấy tín hiệu trực tiếp từ tay điều khiển truyền thẳng xuống mixer.
+  // Trừ đi 1100 (thay vì 1000) vì tay ga của bạn không xuống được dưới 1050.
+  u_throttle = (rc_ch[CH_THROTTLE] - 1100) * 0.4f; 
+  if (u_throttle < 0) u_throttle = 0;
+  
+  u_roll  = (rc_ch[CH_ROLL] - 1500) * 0.3f;
+  u_pitch = (rc_ch[CH_PITCH] - 1500) * 0.3f;
+  u_yaw   = -(rc_ch[CH_YAW] - 1500) * 0.3f; // Đảo chiều ngáp tùy nhu cầu, nhưng không quan trọng bằng roll/pitch
 }
 
 void mode_alt_hold() {

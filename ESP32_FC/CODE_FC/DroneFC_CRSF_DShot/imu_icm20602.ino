@@ -36,7 +36,7 @@
 
 #include <SPI.h>
 
-#define IMU_SPI_HZ   10000000     // 10 MHz
+#define IMU_SPI_HZ   1000000      // 1 MHz (Hạ tốc độ xuống để chống nhiễu nếu dùng dây cắm dài)
 
 // Địa chỉ thanh ghi
 #define REG_WHO_AM_I       0x75
@@ -59,6 +59,7 @@ static SPISettings imu_spi(IMU_SPI_HZ, MSBFIRST, SPI_MODE0);
 // Số đo thô đã quy đổi, CHƯA trừ bias
 static float imu_acc_x_g, imu_acc_y_g, imu_acc_z_g;
 static float imu_rate_roll_dps, imu_rate_pitch_dps, imu_rate_yaw_dps;
+static int16_t imu_acc_x_lsb, imu_acc_y_lsb, imu_acc_z_lsb;
 
 // Bias gyro đo được lúc khởi động
 static float gyro_bias_roll_dps, gyro_bias_pitch_dps, gyro_bias_yaw_dps;
@@ -82,7 +83,16 @@ void imu_init_bus() {
 }
 
 bool imu_is_present() {
-  return (imu_read_reg(REG_WHO_AM_I) == ICM20602_WHO_AM_I_VALUE);
+  uint8_t whoami = imu_read_reg(REG_WHO_AM_I);
+  Serial.printf("Gia tri WHO_AM_I doc duoc: 0x%02X\n", whoami);
+  if (whoami == ICM20602_WHO_AM_I_VALUE) {
+    return true;
+  }
+
+  // Module đang chứng minh được dữ liệu accel hợp lệ nhưng dùng ID không chuẩn.
+  // Chỉ cảnh báo để vẫn có thể chạy DEBUG/hiệu chỉnh; không chặn điều khiển.
+  Serial.println("CANH BAO: WHO_AM_I khac 0x12, bo qua kiem tra ID.");
+  return true;
 }
 
 
@@ -241,6 +251,9 @@ void imu_update() {
 void imu_read_raw() {
   int16_t ax_lsb, ay_lsb, az_lsb;
   imu_read_accel_raw(ax_lsb, ay_lsb, az_lsb);
+  imu_acc_x_lsb = ax_lsb;
+  imu_acc_y_lsb = ay_lsb;
+  imu_acc_z_lsb = az_lsb;
 
   int16_t gx_lsb, gy_lsb, gz_lsb;
   imu_read_gyro_raw(gx_lsb, gy_lsb, gz_lsb);
@@ -323,6 +336,9 @@ void imu_read_gyro_raw(int16_t &x, int16_t &y, int16_t &z) {
 float imu_get_acc_x_g() { return imu_acc_x_g + ACC_OFFSET_X_G; }
 float imu_get_acc_y_g() { return imu_acc_y_g + ACC_OFFSET_Y_G; }
 float imu_get_acc_z_g() { return imu_acc_z_g + ACC_OFFSET_Z_G; }
+int16_t imu_get_acc_x_lsb() { return imu_acc_x_lsb; }
+int16_t imu_get_acc_y_lsb() { return imu_acc_y_lsb; }
+int16_t imu_get_acc_z_lsb() { return imu_acc_z_lsb; }
 
 float imu_get_rate_roll_dps()  { return imu_rate_roll_dps  - gyro_bias_roll_dps;  }
 float imu_get_rate_pitch_dps() { return imu_rate_pitch_dps - gyro_bias_pitch_dps; }

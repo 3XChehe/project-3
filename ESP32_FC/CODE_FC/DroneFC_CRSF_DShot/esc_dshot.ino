@@ -161,18 +161,21 @@ void esc_init() {
     delay(10);
   }
 
-  // Chờ ESC khởi tạo
-  delay(200);
+  // Chờ ESC khởi tạo (thường cần 2-3 giây để nhận DShot và arm)
+  for (int j = 0; j < 300; j++) {
+    esc_write(ESC_IDLE, ESC_IDLE, ESC_IDLE, ESC_IDLE);
+    delay(10);
+  }
 
   Serial.println("[DShot600 4 kenh khoi tao xong]");
 
   // THÁO CÁNH rồi mở khối này để dò chân nào ra motor nào.
   // Mỗi motor sẽ quay nhẹ lần lượt theo đúng thứ tự 1 → 2 → 3 → 4.
-  //   esc_write(ESC_MIN_ARMED, ESC_IDLE, ESC_IDLE, ESC_IDLE); delay(400);
-  //   esc_write(ESC_IDLE, ESC_MIN_ARMED, ESC_IDLE, ESC_IDLE); delay(400);
-  //   esc_write(ESC_IDLE, ESC_IDLE, ESC_MIN_ARMED, ESC_IDLE); delay(400);
-  //   esc_write(ESC_IDLE, ESC_IDLE, ESC_IDLE, ESC_MIN_ARMED); delay(400);
-  //   esc_write(ESC_IDLE, ESC_IDLE, ESC_IDLE, ESC_IDLE);      delay(1000);
+    esc_write(ESC_MIN_ARMED, ESC_IDLE, ESC_IDLE, ESC_IDLE); delay(4000);
+    esc_write(ESC_IDLE, ESC_MIN_ARMED, ESC_IDLE, ESC_IDLE); delay(4000);
+    esc_write(ESC_IDLE, ESC_IDLE, ESC_MIN_ARMED, ESC_IDLE); delay(4000);
+    esc_write(ESC_IDLE, ESC_IDLE, ESC_IDLE, ESC_MIN_ARMED); delay(4000);
+    esc_write(ESC_IDLE, ESC_IDLE, ESC_IDLE, ESC_IDLE);      delay(1000);
 }
 
 

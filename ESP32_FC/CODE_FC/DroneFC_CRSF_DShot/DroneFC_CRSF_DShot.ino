@@ -123,9 +123,9 @@ const float I_LIM_YAW    = 100.0f,  U_LIM_YAW    = 100.0f;
 const float I_LIM_CLIMB  = 700.0f,  P_LIM_CLIMB  = 200.0f;
 
 // ---- Bù lệch gia tốc kế (đơn vị g) -----------------------------------------
-#define ACC_OFFSET_X_G   0.00f
-#define ACC_OFFSET_Y_G   0.00f
-#define ACC_OFFSET_Z_G   0.00f
+#define ACC_OFFSET_X_G   +0.0585f
+#define ACC_OFFSET_Y_G   -0.0248f
+#define ACC_OFFSET_Z_G   +0.0214f
 
 // ---- Bộ lọc thông thấp bên trong ICM20602 ----------------------------------
 #define IMU_DLPF_GYRO    0x06
@@ -136,14 +136,13 @@ const float I_LIM_CLIMB  = 700.0f,  P_LIM_CLIMB  = 200.0f;
 // #define DEBUG_ATTITUDE      // góc hiện tại so với góc mong muốn
 // #define DEBUG_RATE          // tốc độ góc mong muốn so với thực tế
 // #define DEBUG_ALTITUDE      // độ cao và tốc độ lên xuống sau KF
-// #define DEBUG_RC            // giá trị các kênh tay điều khiển
+#define DEBUG_RC            // giá trị các kênh tay điều khiển
 // #define DEBUG_ACC_OFFSET    // để đo ACC_OFFSET_* bên trên
 // #define DEBUG_LOOP_TIME     // chu kì vòng điều khiển, phải luôn ~2000 us
-
+//#define CALIBRATE_ACCEL
 // ============================================================================
 //                        HẾT PHẦN CẤU HÌNH
 // ============================================================================
-
 #define PERIOD_CTRL_MS    2       // 500 Hz
 #define PERIOD_RC_MS      2       // 500 Hz
 #define PERIOD_BARO_MS   10       // 100 Hz
@@ -181,14 +180,11 @@ uint32_t tlm_loop_us;
 
 void setup() {
   Serial.begin(500000);
-
-  esc_init();
-  esc_write(ESC_IDLE, ESC_IDLE, ESC_IDLE, ESC_IDLE);
-
-  rc_init();
-
-  // Kiểm tra IMU TRƯỚC khi hiệu chỉnh gyro
+  // Phải đưa CS lên HIGH ngay: ICM-20602 không hỗ trợ khởi động khi CS/SCK thấp.
   imu_init_bus();
+  delay(1000); // Cho các cảm biến có thêm thời gian khởi động
+
+  // Kiểm tra IMU TRƯỚC khi khởi tạo các ngoại vi khác (RMT, UART)
   sensor_present.imu = imu_is_present();
   Serial.printf("ICM20602 = %d\n", sensor_present.imu);
   if (!sensor_present.imu) {
@@ -198,6 +194,12 @@ void setup() {
       delay(300);
     }
   }
+
+  esc_init();
+  esc_write(ESC_IDLE, ESC_IDLE, ESC_IDLE, ESC_IDLE);
+
+  rc_init();
+
   imu_init();
 
   sensor_present.baro = baro_init();
@@ -281,7 +283,7 @@ void debug_print() {
     defined(DEBUG_RC) || defined(DEBUG_ACC_OFFSET) || defined(DEBUG_LOOP_TIME)
 
   static uint32_t tick = 0;
-  if (++tick % 5) return;
+  if (++tick % 100) return;  // 1 dòng/giây để dễ đọc trên Serial Monitor
 
   if (xSemaphoreTake(mtx_tlm, 0) != pdTRUE) return;
 
@@ -301,19 +303,20 @@ void debug_print() {
   #endif
 
   #ifdef DEBUG_RC
-    Serial.printf("ch1:%d ch2:%d ch3:%d ch4:%d arm:%d mode:%d | rc_ok:%d armed:%d fm:%d\n",
+    Serial.printf("ch1:%d ch2:%d ch3:%d ch4:%d arm:%d mode:%d | rc_ok:%d armed:%d fm:%d | uart:%lu frame:%lu crc_err:%lu\n",
                   tlm_rc_ch[CH_ROLL], tlm_rc_ch[CH_PITCH],
                   tlm_rc_ch[CH_THROTTLE], tlm_rc_ch[CH_YAW],
                   tlm_rc_ch[CH_ARM], tlm_rc_ch[CH_MODE],
-                  tlm_rc_ok, tlm_armed, tlm_flight_mode);
+                  tlm_rc_ok, tlm_armed, tlm_flight_mode,
+                  (unsigned long)rc_get_rx_byte_count(),
+                  (unsigned long)rc_get_frame_count(),
+                  (unsigned long)rc_get_crc_error_count());
   #endif
 
   #ifdef DEBUG_ACC_OFFSET
-    static float ax = 0, ay = 0, az = 1;
-    ax = ax * 0.98f + tlm_acc_x_g * 0.02f;
-    ay = ay * 0.98f + tlm_acc_y_g * 0.02f;
-    az = az * 0.98f + tlm_acc_z_g * 0.02f;
-    Serial.printf("X:%.4f Y:%.4f Z:%.4f\n", ax, ay, az);
+    Serial.printf("ACC raw: X:%d Y:%d Z:%d | g: X:%.4f Y:%.4f Z:%.4f\n",
+                  imu_get_acc_x_lsb(), imu_get_acc_y_lsb(), imu_get_acc_z_lsb(),
+                  tlm_acc_x_g, tlm_acc_y_g, tlm_acc_z_g);
   #endif
 
   #ifdef DEBUG_LOOP_TIME

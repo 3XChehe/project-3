@@ -13,6 +13,8 @@
 #ifndef DRONEFC_TYPES_H
 #define DRONEFC_TYPES_H
 
+#include <driver/rmt.h>
+
 // Các kiểu dữ liệu dùng chung phải nằm trong header, không để trong file .ino.
 // Lý do: Arduino tự sinh prototype cho mọi hàm rồi chèn lên đầu sketch. Nếu
 // một hàm có tham số kiểu struct mà struct đó khai báo trong .ino, prototype
