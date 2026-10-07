@@ -36,7 +36,7 @@
 
 #include <SPI.h>
 
-#define IMU_SPI_HZ   1000000      // 1 MHz (Hạ tốc độ xuống để chống nhiễu nếu dùng dây cắm dài)
+#define IMU_SPI_HZ   10000000      // 1 MHz (Hạ tốc độ xuống để chống nhiễu nếu dùng dây cắm dài)
 
 // Địa chỉ thanh ghi
 #define REG_WHO_AM_I       0x75
@@ -292,44 +292,50 @@ void imu_kalman_1d(float &state_deg, float &variance,
 
 // ---- SPI mức thấp -----------------------------------------------------------
 void imu_write_reg(uint8_t reg, uint8_t value) {
-  digitalWrite(PIN_IMU_CS, LOW);
   SPI.beginTransaction(imu_spi);
+  digitalWrite(PIN_IMU_CS, LOW);
   SPI.transfer(reg & 0x7F);          // bit7 = 0 -> ghi
   SPI.transfer(value);
-  SPI.endTransaction();
   digitalWrite(PIN_IMU_CS, HIGH);
+  SPI.endTransaction();
 }
 
 uint8_t imu_read_reg(uint8_t reg) {
-  digitalWrite(PIN_IMU_CS, LOW);
   SPI.beginTransaction(imu_spi);
+  digitalWrite(PIN_IMU_CS, LOW);
   SPI.transfer(reg | 0x80);          // bit7 = 1 -> đọc
   uint8_t value = SPI.transfer(0x00);
-  SPI.endTransaction();
   digitalWrite(PIN_IMU_CS, HIGH);
+  SPI.endTransaction();
   return value;
 }
 
 void imu_read_accel_raw(int16_t &x, int16_t &y, int16_t &z) {
-  digitalWrite(PIN_IMU_CS, LOW);
   SPI.beginTransaction(imu_spi);
+  digitalWrite(PIN_IMU_CS, LOW);
   SPI.transfer(REG_ACCEL_XOUT_H | 0x80);
-  x = (SPI.transfer(0x00) << 8) | SPI.transfer(0x00);
-  y = (SPI.transfer(0x00) << 8) | SPI.transfer(0x00);
-  z = (SPI.transfer(0x00) << 8) | SPI.transfer(0x00);
-  SPI.endTransaction();
+  uint8_t xh = SPI.transfer(0x00); uint8_t xl = SPI.transfer(0x00);
+  uint8_t yh = SPI.transfer(0x00); uint8_t yl = SPI.transfer(0x00);
+  uint8_t zh = SPI.transfer(0x00); uint8_t zl = SPI.transfer(0x00);
   digitalWrite(PIN_IMU_CS, HIGH);
+  SPI.endTransaction();
+  x = (int16_t)((xh << 8) | xl);
+  y = (int16_t)((yh << 8) | yl);
+  z = (int16_t)((zh << 8) | zl);
 }
 
 void imu_read_gyro_raw(int16_t &x, int16_t &y, int16_t &z) {
-  digitalWrite(PIN_IMU_CS, LOW);
   SPI.beginTransaction(imu_spi);
+  digitalWrite(PIN_IMU_CS, LOW);
   SPI.transfer(REG_GYRO_XOUT_H | 0x80);
-  x = (SPI.transfer(0x00) << 8) | SPI.transfer(0x00);
-  y = (SPI.transfer(0x00) << 8) | SPI.transfer(0x00);
-  z = (SPI.transfer(0x00) << 8) | SPI.transfer(0x00);
-  SPI.endTransaction();
+  uint8_t xh = SPI.transfer(0x00); uint8_t xl = SPI.transfer(0x00);
+  uint8_t yh = SPI.transfer(0x00); uint8_t yl = SPI.transfer(0x00);
+  uint8_t zh = SPI.transfer(0x00); uint8_t zl = SPI.transfer(0x00);
   digitalWrite(PIN_IMU_CS, HIGH);
+  SPI.endTransaction();
+  x = (int16_t)((xh << 8) | xl);
+  y = (int16_t)((yh << 8) | yl);
+  z = (int16_t)((zh << 8) | zl);
 }
 
 // ---- Các hàm lấy dữ liệu ----------------------------------------------------

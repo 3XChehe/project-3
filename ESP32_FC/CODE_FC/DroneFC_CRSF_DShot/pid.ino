@@ -48,15 +48,30 @@ static float tilt_roll_out_dps, tilt_pitch_out_dps;
 
 
 // PID rời rạc, tích phân theo quy tắc hình thang, vi phân theo sai phân lùi.
+// Anti-windup: dừng tích phân khi đầu ra bị bão hòa (clamp), tránh tích lũy
+// quá mức khi drone bị giữ cố định hoặc không thể phản hồi (test trên bàn).
 float pid_step(PidState &st, float error, float kp, float ki, float kd,
                float i_limit, float u_limit) {
   float p_term = kp * error;
-
-  st.integral += ki * (error + st.prev_error) * DT_CTRL / 2.0f;
-  if      (st.integral >  i_limit) st.integral =  i_limit;
-  else if (st.integral < -i_limit) st.integral = -i_limit;
-
   float d_term = kd * (error - st.prev_error) / DT_CTRL;
+
+  // Tính tích phân mới (thang hình thang)
+  float integral_new = st.integral + ki * (error + st.prev_error) * DT_CTRL / 2.0f;
+  if      (integral_new >  i_limit) integral_new =  i_limit;
+  else if (integral_new < -i_limit) integral_new = -i_limit;
+
+  // Anti-windup: chỉ chấp nhận integral mới nếu đầu ra chưa bị bão hòa,
+  // hoặc nếu integral mới kéo đầu ra về phía trong vùng cho phép.
+  float u_pre = p_term + integral_new + d_term;
+  bool saturated_pos = (u_pre >  u_limit);
+  bool saturated_neg = (u_pre < -u_limit);
+  bool windup_pos    = (integral_new > st.integral); // integral đang tăng
+  bool windup_neg    = (integral_new < st.integral); // integral đang giảm
+
+  if (!(saturated_pos && windup_pos) && !(saturated_neg && windup_neg)) {
+    st.integral = integral_new;  // chấp nhận cập nhật
+  }
+  // else: giữ nguyên st.integral để không tích lũy thêm khi đã bão hòa
 
   float u = p_term + st.integral + d_term;
   if      (u >  u_limit) u =  u_limit;

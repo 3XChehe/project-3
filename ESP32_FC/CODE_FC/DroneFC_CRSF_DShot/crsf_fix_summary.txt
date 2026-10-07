@@ -1,0 +1,20 @@
+TÓM TẮT QUÁ TRÌNH SỬA LỖI CRC CHO CRSF RECEIVER (DroneFC_CRSF_DShot)
+Ngày: 02/10/2026
+
+1. Vấn đề của người dùng:
+- File `debug_crsf.ino` đọc và in dữ liệu từ tay cầm CRSF (RadioMaster) rất mượt và nhanh.
+- File `rc_crsf.ino` trong project chính (DroneFC_CRSF_DShot) lại hầu như không nhận được dữ liệu (rất ít khi rc_ok=1) và liên tục báo lỗi `crc_err`.
+
+2. Nguyên nhân (Root Cause):
+- Cả hai file đều có bước kiểm tra toàn vẹn dữ liệu bằng mã CRC8 (đa thức 0xD5) trước khi xử lý gói tin.
+- Tuy nhiên, `debug_crsf.ino` tính toán CRC8 bằng thuật toán dịch bit (bitwise shift) trực tiếp trên từng gói tin. Mã này hoạt động chính xác 100%.
+- Ngược lại, `rc_crsf.ino` sử dụng một mảng tra cứu tĩnh (Lookup Table) tên là `crsf_crc8_tab[256]` để tìm nhanh kết quả nhằm tối ưu tốc độ.
+- LỖI NẰM Ở BẢNG LOOKUP: Bảng này khai báo kích thước 256 phần tử nhưng người code trước đó đã copy thiếu mất 64 giá trị (khối `0x80 - 0xBF`). Do đó trình biên dịch C++ đã tự dồn mảng lên và gán `0x00` cho 64 phần tử cuối. Kết quả là có tới 128/256 giá trị CRC trong bảng bị sai. Mỗi khi phép toán lấy CRC quét qua vùng giá trị sai này, gói tin sẽ bị đánh rớt (tạo ra hàng loạt log `crc_err`).
+
+3. Giải pháp đã thực hiện:
+- Xóa bỏ bảng lookup tĩnh `crsf_crc8_tab` bị thiếu dữ liệu trong `rc_crsf.ino`.
+- Thay thế hàm `crsf_crc8()` dùng bảng lookup bằng hàm `crsf_crc8()` sử dụng vòng lặp dịch bit động được lấy từ file `debug_crsf.ino`.
+- Chip ESP32 dư sức xử lý tính toán dịch bit này ở tốc độ baud 420000 mà không gặp bất kỳ vấn đề giật lag nào.
+
+4. Kết quả:
+- Code trong `rc_crsf.ino` hiện tại đã tính toán CRC chính xác, RC Receiver sẽ nhận tín hiệu mượt mà tương tự như file test debug ban đầu.

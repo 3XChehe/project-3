@@ -50,10 +50,10 @@
 // GOKU G55M 4-in-1 ESC: 4 tín hiệu motor vào 4 chân GPIO.
 // Chọn chân có khả năng RMT (Remote Control Transceiver) của ESP32 để xuất
 // DShot. ESP32 có 8 kênh RMT, ta dùng 4.
-#define PIN_ESC_1        27   // Motor 1 — trước phải (CW)
-#define PIN_ESC_2        26   // Motor 2 — sau trái   (CW)
-#define PIN_ESC_3        25   // Motor 3 — trước trái (CCW)
-#define PIN_ESC_4        33   // Motor 4 — sau phải   (CCW)
+#define PIN_ESC_1        27   // Motor 1 — sau phải   (RR, CW)
+#define PIN_ESC_2        26   // Motor 2 — trước phải (FR, CCW)
+#define PIN_ESC_3        25   // Motor 3 — sau trái   (RL, CCW)
+#define PIN_ESC_4        33   // Motor 4 — trước trái (FL, CW)
 
 // ---- Chân IMU (SPI) --------------------------------------------------------
 #define PIN_IMU_CS        5   // ICM-20602 chip select
@@ -123,9 +123,9 @@ const float I_LIM_YAW    = 100.0f,  U_LIM_YAW    = 100.0f;
 const float I_LIM_CLIMB  = 700.0f,  P_LIM_CLIMB  = 200.0f;
 
 // ---- Bù lệch gia tốc kế (đơn vị g) -----------------------------------------
-#define ACC_OFFSET_X_G   +0.0585f
-#define ACC_OFFSET_Y_G   -0.0248f
-#define ACC_OFFSET_Z_G   +0.0214f
+#define ACC_OFFSET_X_G   +0.0779f
+#define ACC_OFFSET_Y_G   -0.0000f
+#define ACC_OFFSET_Z_G   +0.0232f
 
 // ---- Bộ lọc thông thấp bên trong ICM20602 ----------------------------------
 #define IMU_DLPF_GYRO    0x06
@@ -133,13 +133,13 @@ const float I_LIM_CLIMB  = 700.0f,  P_LIM_CLIMB  = 200.0f;
 
 // ---- Debug ------------------------------------------------------------------
 // Mỗi lần chỉ bật MỘT dòng.
-// #define DEBUG_ATTITUDE      // góc hiện tại so với góc mong muốn
+ #define DEBUG_ATTITUDE      // góc hiện tại so với góc mong muốn
 // #define DEBUG_RATE          // tốc độ góc mong muốn so với thực tế
 // #define DEBUG_ALTITUDE      // độ cao và tốc độ lên xuống sau KF
-#define DEBUG_RC            // giá trị các kênh tay điều khiển
+// #define DEBUG_RC            // giá trị các kênh tay điều khiển
 // #define DEBUG_ACC_OFFSET    // để đo ACC_OFFSET_* bên trên
 // #define DEBUG_LOOP_TIME     // chu kì vòng điều khiển, phải luôn ~2000 us
-//#define CALIBRATE_ACCEL
+// #define CALIBRATE_ACCEL
 // ============================================================================
 //                        HẾT PHẦN CẤU HÌNH
 // ============================================================================
@@ -288,8 +288,9 @@ void debug_print() {
   if (xSemaphoreTake(mtx_tlm, 0) != pdTRUE) return;
 
   #ifdef DEBUG_ATTITUDE
-    Serial.printf("%.1f,%.1f,%.1f,%.1f\n",
-                  tlm_roll_sp_deg, tlm_roll_deg, tlm_pitch_sp_deg, tlm_pitch_deg);
+    Serial.printf("roll_sp:%.1f roll:%.1f pitch_sp:%.1f pitch:%.1f | acc_g: X:%.3f Y:%.3f Z:%.3f \r\n",
+                  tlm_roll_sp_deg, tlm_roll_deg, tlm_pitch_sp_deg, tlm_pitch_deg,
+                  tlm_acc_x_g, tlm_acc_y_g, tlm_acc_z_g);
   #endif
 
   #ifdef DEBUG_RATE

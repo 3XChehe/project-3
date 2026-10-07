@@ -84,7 +84,7 @@ Firmware tuân theo chuẩn Quad X Betaflight:
         ĐẦU DRONE (HƯỚNG BAY TỚI)
                ▲
                │
-    M3 (CCW) ┌───┐ M1 (CW)
+     M4 (CW) ┌───┐ M2 (CCW)
          \   │   │   /
           \  └───┘  /
            \       /
@@ -97,17 +97,19 @@ Firmware tuân theo chuẩn Quad X Betaflight:
            /       \
           /  ┌───┐  \
          /   │   │   \
-    M2 (CW)  └───┘ M4 (CCW)
+   M3 (CCW)  └───┘ M1 (CW)
                │
               ĐUÔI
 ```
 
-- **M1 (Trước Phải)**: Quay ngược chiều kim đồng hồ (**CCW**) — Cánh CCW
-- **M2 (Sau Trái)**: Quay ngược chiều kim đồng hồ (**CCW**) — Cánh CCW
-- **M3 (Trước Trái)**: Quay thuận chiều kim đồng hồ (**CW**) — Cánh CW
-- **M4 (Sau Phải)**: Quay thuận chiều kim đồng hồ (**CW**) — Cánh CW
+> **Chuẩn GOKU G55M (Betaflight Quad X)**: Pad tín hiệu M1 trên PCB của ESC GOKU G55M tương ứng với vị trí **Sau Phải**, tuân theo chuẩn đánh số Betaflight (M1=Rear-Right, M2=Front-Right, M3=Rear-Left, M4=Front-Left).
 
-> **Lưu ý**: Cấu hình chiều quay này KHÁC chuẩn Betaflight Quad X. Ma trận mixer trong `control_task.ino` đã được điều chỉnh phù hợp (đảo dấu u_yaw).
+- **M1 (Sau Phải — Rear-Right)**: Quay thuận chiều kim đồng hồ (**CW**) — Cánh CW
+- **M2 (Trước Phải — Front-Right)**: Quay ngược chiều kim đồng hồ (**CCW**) — Cánh CCW
+- **M3 (Sau Trái — Rear-Left)**: Quay ngược chiều kim đồng hồ (**CCW**) — Cánh CCW
+- **M4 (Trước Trái — Front-Left)**: Quay thuận chiều kim đồng hồ (**CW**) — Cánh CW
+
+> **Ghi chú ma trận mixer**: Cấu hình trên tuân đúng chuẩn Betaflight Quad X. Ma trận mixer trong `control_task.ino` được tính theo vị trí thực tế này.
 
 > **Đảo chiều động cơ**: Vì ESC GOKU G55M chạy firmware BLHeli_32, bạn có thể đảo chiều bất kỳ động cơ nào bằng **BLHeli Configurator** trên máy tính mà không cần phải tháo mối hàn dây motor!
 
