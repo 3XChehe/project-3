@@ -123,9 +123,7 @@ const float I_LIM_YAW    = 100.0f,  U_LIM_YAW    = 100.0f;
 const float I_LIM_CLIMB  = 700.0f,  P_LIM_CLIMB  = 200.0f;
 
 // ---- Bù lệch gia tốc kế (đơn vị g) -----------------------------------------
-#define ACC_OFFSET_X_G   +0.0779f
-#define ACC_OFFSET_Y_G   -0.0000f
-#define ACC_OFFSET_Z_G   +0.0232f
+// Đã chuyển sang tự động hiệu chỉnh lúc khởi động (xem imu_calibrate_accel)
 
 // ---- Bộ lọc thông thấp bên trong ICM20602 ----------------------------------
 #define IMU_DLPF_GYRO    0x06
