@@ -159,7 +159,7 @@ void control_task(void *parameter) {
 // ============================================================================
 
 void mode_angle() {
-  u_throttle = rc_ch[CH_THROTTLE] * 0.6f;
+  u_throttle = rc_ch[CH_THROTTLE] * 0.75f;
   u_roll  = pid_rate_roll (rate_roll_dps,  pid_tilt_roll (roll_deg,  roll_sp_deg));
   u_pitch = pid_rate_pitch(rate_pitch_dps, pid_tilt_pitch(pitch_deg, pitch_sp_deg));
   u_yaw   = pid_rate_yaw  (rate_yaw_dps,   yaw_rate_sp_dps);
@@ -235,6 +235,7 @@ void telemetry_snapshot() {
   tlm_alt_cm       = alt_kf_get_altitude_cm();
   tlm_climb_cms    = alt_kf_get_climb_cms();
   tlm_climb_sp_cms = climb_sp_cms;
+  tlm_baro_alt_cm  = baro_alt_m * 100.0f;
 
   tlm_acc_x_g = acc_x_g;  tlm_acc_y_g = acc_y_g;  tlm_acc_z_g = acc_z_g;
 

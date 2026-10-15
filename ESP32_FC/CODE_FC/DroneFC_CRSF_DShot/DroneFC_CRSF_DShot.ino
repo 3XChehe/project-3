@@ -131,11 +131,11 @@ const float I_LIM_CLIMB  = 700.0f,  P_LIM_CLIMB  = 200.0f;
 
 // ---- Debug ------------------------------------------------------------------
 // Mỗi lần chỉ bật MỘT dòng.
- #define DEBUG_ATTITUDE      // góc hiện tại so với góc mong muốn
+// #define DEBUG_ATTITUDE      // góc hiện tại so với góc mong muốn
 // #define DEBUG_RATE          // tốc độ góc mong muốn so với thực tế
 // #define DEBUG_ALTITUDE      // độ cao và tốc độ lên xuống sau KF
 // #define DEBUG_RC            // giá trị các kênh tay điều khiển
-// #define DEBUG_ACC_OFFSET    // để đo ACC_OFFSET_* bên trên
+ #define DEBUG_ACC_OFFSET    // để đo ACC_OFFSET_* bên trên
 // #define DEBUG_LOOP_TIME     // chu kì vòng điều khiển, phải luôn ~2000 us
 // #define CALIBRATE_ACCEL
 // ============================================================================
@@ -168,6 +168,7 @@ float tlm_roll_sp_deg, tlm_pitch_sp_deg;
 float tlm_rate_roll_dps, tlm_rate_pitch_dps, tlm_rate_yaw_dps;
 float tlm_rate_roll_sp_dps, tlm_rate_pitch_sp_dps;
 float tlm_alt_cm, tlm_climb_cms, tlm_climb_sp_cms;
+float tlm_baro_alt_cm;
 float tlm_acc_x_g, tlm_acc_y_g, tlm_acc_z_g;
 int   tlm_rc_ch[17];
 int   tlm_esc[5];
@@ -298,7 +299,14 @@ void debug_print() {
   #endif
 
   #ifdef DEBUG_ALTITUDE
-    Serial.printf("%.1f,%.1f,%.1f\n", tlm_alt_cm, tlm_climb_cms, tlm_climb_sp_cms);
+    Serial.printf("[ALT] Baro:%s | Raw: %6.1f cm (%5.2f m) | KF: %6.1f cm (%5.2f m) | Vz: %5.1f cm/s | SP: %5.1f cm/s | Mode:%s\r\n",
+                  sensor_present.baro ? "OK" : "DISCONN",
+                  tlm_baro_alt_cm, tlm_baro_alt_cm / 100.0f,
+                  tlm_alt_cm, tlm_alt_cm / 100.0f,
+                  tlm_climb_cms,
+                  tlm_climb_sp_cms,
+                  (tlm_flight_mode == MODE_ALT_HOLD) ? "ALT_HOLD" :
+                  (tlm_flight_mode == MODE_FAILSAFE) ? "FAILSAFE" : "ANGLE");
   #endif
 
   #ifdef DEBUG_RC

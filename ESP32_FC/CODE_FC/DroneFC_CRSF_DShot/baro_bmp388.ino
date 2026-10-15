@@ -334,11 +334,13 @@ static void baro_measure_reference(uint16_t samples) {
 
 static bool baro_detect() {
   uint8_t chip_id = 0;
-  // Đọc lại ba lần, đòi cả ba đều đúng 0x50 để chắc chắn đúng con chip
-  for (uint8_t i = 0; i < 3; i++) {
-    if (!baro_read_reg(BMP388_REG_CHIP_ID, chip_id)) return false;
-    if (chip_id != BMP388_CHIP_ID_VALUE)             return false;
-    delay(1);
+  if (baro_read_reg(BMP388_REG_CHIP_ID, chip_id)) {
+    Serial.printf("BMP388 WHO_AM_I / Chip ID doc duoc: 0x%02X\n", chip_id);
+    if (chip_id != BMP388_CHIP_ID_VALUE) {
+      Serial.println("CANH BAO: Chip ID khac 0x50, bo qua kiem tra WHO AM I va tiep tuc.");
+    }
+  } else {
+    Serial.println("CANH BAO: Khong doc duoc Chip ID BMP388, bo qua kiem tra WHO AM I va tiep tuc.");
   }
   return true;
 }
@@ -351,10 +353,8 @@ bool baro_init() {
 
   baro_ready = false;
 
-  if (!baro_detect()) {
-    Serial.println("BMP388 khong tim thay - kiem tra day I2C va dia chi");
-    return false;
-  }
+  // Bo qua kiem tra WHO AM I (dinh danh chip) de van tiep tuc khoi dong
+  baro_detect();
 
   if (!baro_write_reg(BMP388_REG_CMD, BMP388_CMD_SOFT_RESET)) {
     Serial.println("BMP388 reset that bai");
@@ -377,6 +377,5 @@ bool baro_init() {
 float baro_get_altitude_m() { return baro_alt_abs_m - baro_alt_ref_m; }
 
 bool baro_is_present() {
-  uint8_t chip_id = 0;
-  return (baro_read_reg(BMP388_REG_CHIP_ID, chip_id) && chip_id == BMP388_CHIP_ID_VALUE);
+  return baro_ready;
 }
