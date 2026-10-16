@@ -1,294 +1,67 @@
-# Giải thích Cơ chế PID Cascade và Hiện tượng "Nghiêng càng mạnh hơn" khi Test trên Bàn
+# PID cascade và kiểm tra chiều phản hồi
 
-> Tài liệu này giải thích tại sao drone hoạt động đúng khi bay, nhưng khi bạn **dùng tay nghiêng drone trên bàn**, bạn lại cảm thấy 2 motor phía dưới mạnh hơn — tưởng như "đẩy ngược" làm drone càng nghiêng thêm.
+Tài liệu mô tả mixer đang khai báo trong `DroneFC_CRSF_DShot/control_task.ino` và cùng mixer được giữ trong bản ManualAcc after_change. **Không thể kết luận firmware đúng chiều hoặc bay ổn chỉ từ tiếng motor khi dùng tay giữ drone.** Tháo cánh trước mọi kiểm tra trên bàn; không thả drone có cánh đang quay để thử cân bằng.
 
----
+## 1. Hai tầng điều khiển roll/pitch
 
-## 1. Kiến trúc PID Cascade (PID Xếp Tầng)
-
-Firmware này dùng **PID 2 tầng** (cascade / nested PID) cho trục roll và pitch:
-
-```
-Tay điều khiển (cần gạt)
-        │
-        ▼  angle_sp_deg (góc mong muốn, ví dụ 0°)
-   ┌──────────────┐
-   │  Tầng NGOÀI  │  pid_tilt_roll / pid_tilt_pitch
-   │  (góc nghiêng)│  KP_TILT = 10.0
-   └──────────────┘
-        │
-        ▼  rate_sp_dps (tốc độ góc mong muốn, đơn vị °/s)
-   ┌──────────────┐
-   │  Tầng TRONG  │  pid_rate_roll / pid_rate_pitch
-   │ (tốc độ góc) │  KP_RATE = 0.5, KI_RATE = 1.4, KD_RATE = 0.03
-   └──────────────┘
-        │
-        ▼  u_roll / u_pitch (tín hiệu điều khiển)
-   ┌──────────────┐
-   │    MIXER     │  Phân phối lực cho 4 motor
-   └──────────────┘
-        │
-        ▼
-  ESC 1, 2, 3, 4
+```text
+Góc đặt − góc IMU → PID góc → tốc độ góc đặt
+Tốc độ góc đặt − tốc độ gyro → PID rate → u_roll/u_pitch
+Collective + roll + pitch + yaw → mixer → clamp → lệnh ESC
 ```
 
----
+- Tầng góc dùng `error=angle_sp-angle`, đầu ra có đơn vị độ/giây.
+- Tầng rate dùng `error=rate_sp-rate`, đầu ra dùng đơn vị điều khiển nội bộ, không phải lực đẩy hay RPM.
+- Yaw bám tốc độ, không có vòng giữ góc yaw tuyệt đối.
+- Ví dụ chỉ xét P: angle_sp0°, angle+20°, KP_TILT10 → rate_sp−200°/s. Nếu gyro0 và KP_RATE0.5 thì u_roll≈−100. I, D, trạng thái trước đó và saturation có thể làm giá trị thực khác.
 
-## 2. Giải thích từng tầng
+## 2. Mixer và thứ tự motor hiện tại
 
-### Tầng Ngoài — Điều khiển Góc (Angle Controller)
-
-```c
-// pid.ino, line 123-128
-float pid_tilt_roll(float angle_deg, float angle_sp_deg) {
-  tilt_roll_out_dps = pid_step(pid_tilt_roll_st, angle_sp_deg - angle_deg,
-                               KP_TILT_ROLL, ...);
-  return tilt_roll_out_dps;
-}
+```cpp
+m1 = throttle + yaw - roll + pitch;
+m2 = throttle - yaw - roll - pitch;
+m3 = throttle - yaw + roll + pitch;
+m4 = throttle + yaw + roll - pitch;
 ```
 
-- **Đầu vào**: `angle_sp_deg` (góc mong muốn từ cần gạt) và `angle_deg` (góc thực từ IMU)
-- **Sai số**: `error = angle_sp_deg - angle_deg`
-- **Đầu ra**: Tốc độ góc mong muốn (°/s) để tầng trong bám theo
-- **Ý nghĩa**: Nếu drone đang nghiêng phải 10° trong khi setpoint là 0°, tầng này ra lệnh "hãy xoay trái với tốc độ = KP × 10 = **100 °/s**"
+| Motor | GPIO | Vị trí theo khai báo | Chiều theo khai báo, nhìn từ trên |
+|---|---:|---|---|
+| M1 | 27 | Sau phải | CW |
+| M2 | 26 | Trước phải | CCW |
+| M3 | 25 | Sau trái | CCW |
+| M4 | 33 | Trước trái | CW |
 
-### Tầng Trong — Điều khiển Tốc Độ Góc (Rate Controller)
-
-```c
-// pid.ino, line 104-108
-float pid_rate_roll(float rate_dps, float rate_sp_dps) {
-  return pid_step(pid_rate_roll_st, rate_sp_dps - rate_dps,
-                  KP_RATE_ROLL, KI_RATE_ROLL, KD_RATE_ROLL, ...);
-}
+```text
+                 TRƯỚC
+      M4 trái/CW       M2 phải/CCW
+                 +
+      M3 trái/CCW      M1 phải/CW
+                  SAU
 ```
 
-- **Đầu vào**: `rate_sp_dps` (từ tầng ngoài) và `rate_dps` (tốc độ góc thực từ gyro)
-- **Đầu ra**: `u_roll` — tín hiệu điều khiển cuối cùng đưa vào mixer
+Với u_roll−100, chưa có pitch/yaw và chưa clamp: M1/M2 bên phải **tăng100**, M3/M4 bên trái **giảm100**. Với u_pitch−100: M1/M3 phía sau **giảm100**, M2/M4 phía trước **tăng100**. Đây là kết quả đại số của mixer, không xác nhận trục IMU/dây thực đã khớp.
 
-### Mixer — Phân phối lực cho 4 motor
+## 3. Vì sao không được coi “nâng phía cao hơn” là phản hồi đúng
 
-```c
-// control_task.ino, line 136-139
-esc_1 = u_throttle - u_yaw - u_pitch + u_roll;   // M1 front-right CCW
-esc_2 = u_throttle + u_yaw + u_pitch + u_roll;   // M2 rear-left   CCW
-esc_3 = u_throttle + u_yaw - u_pitch - u_roll;   // M3 front-left  CW
-esc_4 = u_throttle - u_yaw + u_pitch - u_roll;   // M4 rear-right  CW
-```
+Trong mô hình thông thường, khi bên phải đang thấp, muốn cân bằng lại cần moment nâng bên phải tương đối so với bên trái. Tăng lực phía đã cao không tự nhiên đưa thân về phẳng; giải thích ngược trong tài liệu cũ là sai.
 
-**Sơ đồ vị trí motor (nhìn từ trên):**
+Chiều hiệu chỉnh còn phụ thuộc dấu góc/rate thật, hướng gắn IMU, vị trí/chiều motor và chiều lực đẩy. Nếu dấu của một khối không khớp, vòng kín có thể thành phản hồi dương. Không sửa dấu một trục chỉ theo tên “roll dương” mà chưa kiểm toàn chuỗi.
 
-```
-        TRƯỚC (PITCH -)
-            │
-   M3(CW)  ─┼─  M1(CCW)
-   front-L  │  front-R
-            │
-   ──────── + ────────    ROLL: trái(-) / phải(+)
-            │
-   M2(CCW) ─┼─  M4(CW)
-   rear-L   │  rear-R
-            │
-        SAU (PITCH +)
-```
+Khi giữ frame bằng tay, moment không làm drone quay tự do, sai số có thể kéo dài và I có thể tích lũy. Anti-windup chỉ giới hạn một phần tác động của bão hòa, không phát hiện “đang bị tay giữ”. Motor mạnh dần **không chứng minh đúng hướng**, cũng không có cơ sở hứa khi thả tay sẽ tự cân bằng.
 
----
+## 4. Kiểm tra bàn trước khi cân nhắc bay
 
-## 3. Giải thích hiện tượng "Motor mạnh hơn khi dùng tay nghiêng" ← QUAN TRỌNG
+1. Tháo toàn bộ cánh, cố định môi trường thử và có cách cắt nguồn an toàn; không tự chạy motor chỉ để đọc tài liệu.
+2. Khi disarmed, dùng debug góc/rate để ghi dấu thực khi nghiêng/quay từng trục. Kiểm góc accel và gyro có cùng chiều biến thiên; giữ yên khác với đang quay.
+3. Đối chiếu GPIO với đúng motor thực và chiều quay ESC theo quy trình phần cứng riêng, từng motor một, không dựa vào sơ đồ firmware thay cho kiểm tra dây.
+4. Đối chiếu góc đo → sai số → rate đặt → output PID → chênh lệch motor: moment dự kiến phải chống lại sai lệch khi tốc độ góc gần0.
+5. Tách ảnh hưởng giới hạn motor/ga thấp. Khi motor đã clamp, không kỳ vọng chênh lệch đầu ra đúng như ví dụ tuyến tính.
+6. Nếu dấu/trục/thứ tự chưa rõ, dừng kiểm tra; không gắn cánh hoặc dùng bay thử để xác định chiều phản hồi.
 
-### Tình huống:
-- Drone đang ở trạng thái **cân bằng** (roll_sp = 0°, roll_deg ≈ 0°)
-- Bạn **dùng tay nghiêng drone sang phải** (roll_deg tăng lên, ví dụ +20°)
-- Bạn thấy **2 motor bên trái** (phía cao hơn) quay **mạnh hơn**
-- Cảm giác: chúng đang "đẩy ngược" — bên trái đẩy lên còn bên phải bị kéo xuống
+## 5. Phân biệt bản gốc và ManualAcc after_change đã sửa
 
-### Giải thích — Tại sao đây là ĐÚNG:
+Công thức mixer giống nhau không có nghĩa luồng an toàn giống nhau. Bản after_change đã sửa reset PID khi disarmed, phản hồi bão hòa motor, health cảm biến và mode DEGRADED; không mặc định các cơ chế đó có trong sketch `DroneFC_CRSF_DShot` ở thư mục này.
 
-**Bước 1: Tính sai số tầng ngoài**
-```
-error = angle_sp_deg - angle_deg = 0° - (+20°) = -20°
-```
-Sai số âm → PID muốn **quay về bên trái** (giảm roll)
+Trong after_change: nội bộ800→DShot0; armed900–1600→DShot48–2047. Mapping ANGLE `RC×0.6` chưa được thay đổi hoặc xác nhận bằng đo lực đẩy. ALT_HOLD là điều khiển tốc độ dọc với IMU+baro, không có cảm biến vị trí ngang nên không bảo đảm loại bỏ trôi ngang.
 
-**Bước 2: Tầng ngoài tính tốc độ góc mong muốn**
-```
-rate_sp = KP_TILT × error = 10.0 × (-20) = -200 °/s
-```
-Tầng ngoài muốn gyro đọc **-200 °/s** (xoay nhanh về bên trái)
-
-**Bước 3: Tầng trong tính u_roll**
-```
-u_roll = PID(rate_sp - rate_dps) = PID(-200 - 0) → âm lớn
-u_roll ≈ KP_RATE × (-200) = 0.5 × (-200) = -100
-```
-→ `u_roll` là số **âm** (lệnh "nghiêng trái")
-
-**Bước 4: Mixer phân phối lực**
-```
-esc_1 (front-right) = throttle + u_roll  = throttle + (-100)  → GIẢM
-esc_3 (front-left)  = throttle - u_roll  = throttle - (-100)  → TĂNG
-esc_2 (rear-left)   = throttle + u_roll  = throttle + (-100)  → GIẢM
-esc_4 (rear-right)  = throttle - u_roll  = throttle - (-100)  → TĂNG
-```
-
-> ✅ **Motor bên TRÁI (M2, M3) TĂNG** — để nâng phần trái lên, tức là **kéo drone về vị trí cân bằng** từ trạng thái đang nghiêng sang phải.
-
-### Tại sao CẢM GIÁC "đẩy ngược"?
-
-```
-Trạng thái: Bạn nghiêng drone sang PHẢI (+20°)
-
-          TRÁI (cao)      PHẢI (thấp)
-            M3, M2   |   M1, M4
-              ▲  ▲   |   ↓  ↓
-         TĂNG lực    |   GIẢM lực
-
-  PID cố NÂNG phần bên TRÁI (phía cao) và HẠ bên PHẢI
-  để kéo trọng tâm về 0°.
-```
-
-Nghe có vẻ lạ phải không — sao phải nâng bên **cao** lên? Thực ra:
-
-- Drone đang nghiêng PHẢI (+20°)
-- Bên TRÁI đang ở vị trí **cao hơn** → cần giảm góc → tăng motor bên trái để nâng thân bên trái, **xoay frame theo chiều ngược lại** về 0°
-- Đây là nguyên lý **moment lực quay ngược chiều** để lấy lại cân bằng
-
-**Thêm nữa — Tích phân I tích lũy khi bạn giữ tay:**
-
-Khi bạn giữ drone bằng tay, bạn đang **kháng lại lực** mà PID tạo ra:
-1. PID tăng motor trái → bạn giữ frame, drone không quay được
-2. Sai số vẫn tồn tại → khâu tích phân I **tiếp tục tích lũy**
-3. Motor trái **mạnh lên mãi** theo thời gian
-4. Cảm giác: "Càng giữ lâu, motor càng mạnh hơn, đẩy ngược"
-
-**Thực ra motor đang ĐÚNG hướng** — chúng đang cố lấy lại cân bằng. Khi bạn thả tay, drone sẽ tự về 0°.
-
----
-
-## 4. Ví dụ số cụ thể với firmware hiện tại
-
-| Thông số | Giá trị |
-|---|---|
-| `roll_sp_deg` | 0° (cần gạt giữa) |
-| `roll_deg` (bạn đang nghiêng) | +20° (nghiêng phải) |
-| Error tầng ngoài | 0 - 20 = **-20°** |
-| `KP_TILT_ROLL` | 10.0 |
-| `rate_sp` từ tầng ngoài | 10 × (-20) = **-200 °/s** |
-| `rate_dps` (gyro, bạn giữ yên) | **0 °/s** |
-| Error tầng trong | -200 - 0 = **-200 °/s** |
-| `u_roll` (KP_RATE = 0.5, chỉ P) | ≈ **-100** |
-| M2, M3 (trái) | throttle **+ 100** → TĂNG |
-| M1, M4 (phải) | throttle **- 100** → GIẢM |
-
----
-
-## 5. Kiểm tra nhanh trên bàn (không cần bay)
-
-Bật `DEBUG_ATTITUDE` (đã bật mặc định trong config):
-
-```c
-// DroneFC_CRSF_DShot.ino, line 136
-#define DEBUG_ATTITUDE      // góc hiện tại so với góc mong muốn
-```
-
-Output: `roll_sp_deg, roll_deg, pitch_sp_deg, pitch_deg`
-
-**Quy trình kiểm tra:**
-1. Không arm, chỉ quan sát
-2. Nghiêng drone sang phải → `roll_deg` phải **tăng dương**
-3. Nghiêng sang trái → `roll_deg` phải **âm**
-4. Nếu ngược lại → IMU bị gắn ngược trục X, cần đổi dấu khi đọc
-
-Sau đó bật `DEBUG_RATE`:
-```c
-// #define DEBUG_RATE          // tốc độ góc mong muốn so với thực tế
-```
-Output: `rate_roll_sp_dps, rate_roll_dps, ...`
-
-5. Arm + ga thấp + nghiêng phải → `rate_roll_sp_dps` phải **âm** (muốn xoay trái)
-
----
-
-## 6. Nguyên nhân phổ biến khiến điều khiển bị ĐẢO NGƯỢC
-
-Nếu drone **không tự ổn định** khi thả tay (ngã thêm thay vì về cân bằng):
-
-### 6.1 Trục IMU lắp ngược
-```c
-// imu_icm20602.ino — kiểm tra dấu khi đọc gyro/acc
-float imu_get_roll_deg();   // Nghiêng phải → phải trả về DƯƠNG
-```
-**Test nhanh**: Nghiêng phải → `roll_deg` phải tăng dương (xem DEBUG_ATTITUDE)
-
-### 6.2 Vị trí motor trong mixer bị sai
-```c
-// control_task.ino, line 136-139
-// Kiểm tra M1 có thực sự là front-right không
-esc_1 = u_throttle - u_yaw - u_pitch + u_roll;
-```
-**Lưu ý từ code**: `// u_roll và u_yaw đã được hoán đổi vì thực tế lắp đặt motor bị lệch`
-
-### 6.3 Chiều quay motor sai
-- M1 front-right: phải quay **CCW** (ngược chiều kim đồng hồ nhìn từ trên)
-- M2 rear-left: phải quay **CCW**
-- M3 front-left: phải quay **CW**
-- M4 rear-right: phải quay **CW**
-
-Nếu motor quay sai chiều → hiệu ứng torque yaw bị đảo, gây ảnh hưởng toàn bộ mixer.
-
----
-
-## 7. Tóm tắt
-
-```
-╔══════════════════════════════════════════════════════════════╗
-║  KẾT LUẬN                                                   ║
-║                                                             ║
-║  Khi bạn nghiêng drone sang PHẢI (roll = +20°):            ║
-║                                                             ║
-║  PID tính: error = 0 - 20 = -20 → muốn xoay TRÁI          ║
-║  Motor TRÁI (M2,M3) TĂNG → Nâng phần trái lên             ║
-║  Motor PHẢI (M1,M4) GIẢM → Hạ phần phải xuống             ║
-║  → Frame xoay về 0° = ĐÚNG                                 ║
-║                                                             ║
-║  Cảm giác "motor mạnh hơn khi giữ tay nghiêng" = ĐÚNG     ║
-║  Bởi vì bạn KHÁNG LẠI lực PID, khâu I tích lũy.          ║
-║  Khi thả tay → drone tự về cân bằng.                       ║
-╚══════════════════════════════════════════════════════════════╝
-```
-
----
-
-## 8. Sơ đồ tổng thể luồng điều khiển
-
-```
-┌──────────────────────────────────────────────────────────────────┐
-│  VÒNG ĐIỀU KHIỂN CHÍNH (500Hz, core 1)                          │
-│                                                                   │
-│  RC cần gạt ─────────────────────────────────────┐              │
-│  (roll_sp_deg = 0°)                               ▼              │
-│                                             [TẦNG NGOÀI]        │
-│  IMU (acc+gyro)                             pid_tilt_roll        │
-│   → roll_deg ────────────────────────────►  error = sp - deg    │
-│                                             KP_TILT = 10.0      │
-│                                                  │               │
-│                                                  ▼ rate_sp (°/s)│
-│                                             [TẦNG TRONG]        │
-│   → rate_roll_dps ───────────────────────►  pid_rate_roll       │
-│                                             KP_RATE = 0.5       │
-│                                             KI_RATE = 1.4       │
-│                                             KD_RATE = 0.03      │
-│                                                  │               │
-│                                                  ▼ u_roll        │
-│  u_throttle ────────────────────────────► [MIXER QUAD-X]        │
-│  u_pitch ───────────────────────────────►       │                │
-│  u_yaw ─────────────────────────────────►  esc_1,2,3,4         │
-│                                                  │               │
-│                                        [DShot600 → ESC]         │
-│                                                  │               │
-│                                           M1, M2, M3, M4        │
-└──────────────────────────────────────────────────────────────────┘
-```
-
----
-
-*Tài liệu tương ứng firmware: `DroneFC_CRSF_DShot` — PID cascade 2 tầng, 500Hz, ESP32 + ICM20602 + CRSF + DShot600*
+Báo cáo của bản đã sửa: [BAO_CAO_XU_LY_MANUALACC.md](../DroneFC_CRSF_DShot_ManualAcc_after_change/BAO_CAO_XU_LY_MANUALACC.md).
