@@ -100,8 +100,8 @@
 // ---- Giới hạn lệnh từ cần gạt ----------------------------------------------
 #define LIM_TILT_DEG           20.0f   // độ nghiêng tối đa ở chế độ angle
 #define LIM_YAW_RATE_DPS      100.0f   // tốc độ xoay tối đa, độ/giây
-#define LIM_CLIMB_RATE_CMS    100.0f   // tốc độ lên xuống tối đa, cm/giây
-#define FAILSAFE_DESCENT_CMS  -60.0f   // tốc độ hạ khi mất sóng, cm/giây
+#define LIM_CLIMB_RATE_CMS    30.0f   // tốc độ lên xuống tối đa, cm/giây
+#define FAILSAFE_DESCENT_CMS  -20.0f   // tốc độ hạ khi mất sóng, cm/giây
 
 // ---- Giới hạn DShot (0-2047) ------------------------------------------------
 // DShot giá trị 0 = disarmed, 48 = idle khi armed, 2047 = full throttle
@@ -141,8 +141,20 @@ const float I_LIM_CLIMB  = 700.0f,  P_LIM_CLIMB  = 200.0f;
 //   Cách 2:
 //     - Bật "#define DEBUG_ACC_OFFSET", đặt phẳng, ghi nhận X, Y, Z.
 //     - Điền thủ công: X = -giá_trị_X, Y = -giá_trị_Y, Z = 1.0 - giá_trị_Z.
-#define ACC_OFFSET_X_G   +0.0152f
-#define ACC_OFFSET_Y_G   +0.0141f
+//  Hiện tượng trôi khi … | Nguyên nhân góc ước lượng | Cần can thiệp thô… | Hành động điều ch… | Ví dụ chỉnh
+//   -----------------------|---------------------------|--------------------|--------------------|---------------------
+//    Trôi về PHÍA TRƯỚC    | FC tưởng đang ngửa sau    | ACC_OFFSET_X_G     | GIẢM (trừ bớt đi)  | Từ +0.0152 →
+//    (Forward)             | (ax quá dương)            |                    |                    | +0.0052
+//    Trôi về PHÍA SAU      | FC tưởng đang chúi trước  | ACC_OFFSET_X_G     | TĂNG (cộng thêm    | Từ +0.0152 →
+//    (Backward)            | (ax quá âm)               |                    | vào)               | +0.0252
+//    Trôi sang TRÁI (Left) | FC tưởng đang nghiêng     | ACC_OFFSET_Y_G     | GIẢM (trừ bớt đi)  | Từ +0.0141 →
+//                          | phải (ay quá dương)       |                    |                    | +0.0041
+//    Trôi sang PHẢI        | FC tưởng đang nghiêng     | ACC_OFFSET_Y_G     | TĂNG (cộng thêm    | Từ +0.0141 →
+//    (Right)               | trái (ay quá âm)          |                    | vào)               | +0.0241
+
+
+#define ACC_OFFSET_X_G   +0.0112f
+#define ACC_OFFSET_Y_G   +0.0101f
 #define ACC_OFFSET_Z_G   +0.0337f
 
 // ---- Bộ lọc thông thấp bên trong ICM20602 ----------------------------------
@@ -154,8 +166,8 @@ const float I_LIM_CLIMB  = 700.0f,  P_LIM_CLIMB  = 200.0f;
 // #define DEBUG_ATTITUDE      // góc hiện tại so với góc mong muốn
 // #define DEBUG_RATE          // tốc độ góc mong muốn so với thực tế
 // #define DEBUG_ALTITUDE      // độ cao và tốc độ lên xuống sau KF
-// #define DEBUG_RC            // giá trị các kênh tay điều khiển
-#define DEBUG_ACC_OFFSET    // để kiểm tra kết quả bù lệch (drone phẳng: X~0, Y~0, Z~1)
+ #define DEBUG_RC            // giá trị các kênh tay điều khiển
+// #define DEBUG_ACC_OFFSET    // để kiểm tra kết quả bù lệch (drone phẳng: X~0, Y~0, Z~1)
 // #define DEBUG_LOOP_TIME     // chu kì vòng điều khiển, phải luôn ~2000 us
 // #define CALIBRATE_ACCEL     // BẬT ĐỂ CHẠY HIỆU CHỈNH ACC THỦ CÔNG (dừng bay, in 3 dòng offset)
 // ============================================================================
@@ -330,7 +342,7 @@ void debug_print() {
   #endif
 
   #ifdef DEBUG_RC
-    Serial.printf("ch1:%d ch2:%d ch3:%d ch4:%d arm:%d mode:%d | rc_ok:%d armed:%d fm:%d | uart:%lu frame:%lu crc_err:%lu\n",
+    Serial.printf("ch1:%d ch2:%d ch3:%d ch4:%d arm:%d mode:%d | rc_ok:%d armed:%d fm:%d | uart:%lu frame:%lu crc_err:%lu \r\n",
                   tlm_rc_ch[CH_ROLL], tlm_rc_ch[CH_PITCH],
                   tlm_rc_ch[CH_THROTTLE], tlm_rc_ch[CH_YAW],
                   tlm_rc_ch[CH_ARM], tlm_rc_ch[CH_MODE],

@@ -159,14 +159,14 @@ void control_task(void *parameter) {
 // ============================================================================
 
 void mode_angle() {
-  u_throttle = rc_ch[CH_THROTTLE] * 0.6f;
+  u_throttle = rc_ch[CH_THROTTLE] * 0.75f;
   u_roll  = pid_rate_roll (rate_roll_dps,  pid_tilt_roll (roll_deg,  roll_sp_deg));
   u_pitch = pid_rate_pitch(rate_pitch_dps, pid_tilt_pitch(pitch_deg, pitch_sp_deg));
   u_yaw   = pid_rate_yaw  (rate_yaw_dps,   yaw_rate_sp_dps);
 }
 
 void mode_alt_hold() {
-  u_throttle = ESC_IDLE + pid_climb(alt_kf_get_climb_cms(), climb_sp_cms);
+  u_throttle = ESC_IDLE + pid_climb(alt_kf_get_climb_cms(), climb_sp_cms); //1150 thay cho ESC_IDLE
   u_roll  = pid_rate_roll (rate_roll_dps,  pid_tilt_roll (roll_deg,  roll_sp_deg));
   u_pitch = pid_rate_pitch(rate_pitch_dps, pid_tilt_pitch(pitch_deg, pitch_sp_deg));
   u_yaw   = pid_rate_yaw  (rate_yaw_dps,   yaw_rate_sp_dps);
@@ -210,7 +210,20 @@ void rc_fetch_and_map() {
   roll_sp_deg     = roll_sp_deg     * (1 - a) + ( float(rc_ch[CH_ROLL]     - 1500) / (500.0f / LIM_TILT_DEG))        * a;
   pitch_sp_deg    = pitch_sp_deg    * (1 - a) + ( float(rc_ch[CH_PITCH]    - 1500) / (500.0f / LIM_TILT_DEG))        * a;
   yaw_rate_sp_dps = yaw_rate_sp_dps * (1 - a) + (-float(rc_ch[CH_YAW]      - 1500) / (500.0f / LIM_YAW_RATE_DPS))    * a;
-  climb_sp_cms    = climb_sp_cms    * (1 - a) + ( float(rc_ch[CH_THROTTLE] - 1500) / (500.0f / LIM_CLIMB_RATE_CMS))  * a;
+  
+  int thr_diff = rc_ch[CH_THROTTLE] - 1500;
+
+  // Vùng chết ±60us (tương đương cần gạt từ -12 đến +12 trên EdgeTX):
+  if (abs(thr_diff) < 60) {
+    thr_diff = 0; // Nhích trong khoảng -12 đến +12: giữ nguyên cao độ tuyệt đối, không nhúc nhích ga
+  } else if (thr_diff > 0) {
+    thr_diff -= 60;
+  } else {
+    thr_diff += 60;
+  }
+  climb_sp_cms = climb_sp_cms * (1 - a) + ( float(thr_diff) / (440.0f / LIM_CLIMB_RATE_CMS) ) * a;
+  
+  //climb_sp_cms    = climb_sp_cms    * (1 - a) + ( float(rc_ch[CH_THROTTLE] - 1500) / (500.0f / LIM_CLIMB_RATE_CMS))  * a;
 }
 
 void esc_clamp(int lo, int hi) {
