@@ -89,6 +89,19 @@ ESP32 WROOM32 38Pin
 
 ---
 
+## Ghi telemetry trên thẻ nhớ EdgeTX
+
+Firmware gửi telemetry CRSF tới RP3, không dùng Wi-Fi hoặc UDP. Nối RP3 TX tới GPIO16, RP3 RX tới GPIO17 và nối GND chung. Trên tay cầm, chạy Discover new sensors và bật Logs cho các sensor cần ghi; dùng Special Function SD Logs với công tắc SA đã cấu hình, sau đó kiểm tra file CSV trong thư mục LOGS của thẻ nhớ.
+
+- `Ptch`, `Roll`: góc hiện có của bộ điều khiển. Frame CRSF bắt buộc có yaw, nhưng firmware chưa ước lượng góc yaw nên trường `Yaw` luôn là 0 và không phải số đo.
+- `Alt`: độ cao tương đối từ Kalman; `VSpd`: tốc độ lên/xuống từ Kalman. Khi barometer không khỏe, firmware ngừng gửi hai giá trị này; tay cầm có thể vẫn hiển thị giá trị cũ cho đến khi sensor timeout.
+- `FM`: tên chế độ ANGLE, ALT_HOLD hoặc FAILSAFE. Việc ghi sensor dạng chuỗi vào CSV phụ thuộc phiên bản EdgeTX và cần kiểm tra thực tế.
+- CH1–CH6: kiểm tra các cột channel trong CSV SD Logs của phiên bản EdgeTX đang dùng. Đây là đầu ra phía tay cầm, không phải giá trị FC đã nhận khi mất gói.
+
+Mỗi loại frame được thử gửi mỗi 160 ms; tốc độ dữ liệu thực nhận và ghi còn phụ thuộc tỷ lệ telemetry ELRS, chất lượng link và chu kỳ SD Logs. Những dữ liệu debug khác của UDP cũ không được ghi qua CRSF. Tháo cánh khi kiểm tra, đối chiếu serial debug và xác nhận CSV trước khi bay.
+
+---
+
 ## Giấy Phép & Ghi Công
 
 - Dựa trên mã nguồn gốc của **Nguyễn Văn Quý** — [Kỹ Thuật UAV](https://github.com/CarbonAeronautics).

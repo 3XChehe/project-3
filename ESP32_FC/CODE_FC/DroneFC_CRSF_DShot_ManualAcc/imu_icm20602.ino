@@ -351,6 +351,46 @@ void imu_read_gyro_raw(int16_t &x, int16_t &y, int16_t &z) {
   z = (int16_t)((zh << 8) | zl);
 }
 
+// ============================================================================
+//  Do bias cua acc_earth_z khi drone dung yen.
+//
+//  Goi MOT LAN trong setup(), sau khi gyro da calibrate va truoc khi tao
+//  task bay. Ham chay imu_update() de goc Kalman 1D on dinh roi lay trung
+//  binh acc_earth_z tren 'samples' mau. Ket qua duoc tru ra moi vong dieu
+//  khien de triet vz drift khi dung yen.
+//
+//  Yeu cau: drone phai dung yen trong suot thoi gian ham chay (~1.6 giay),
+//  cung dieu kien da yeu cau cho hieu chinh gyro.
+// ============================================================================
+float imu_calibrate_acc_earth_z(int samples) {
+  const int SETTLE = 300;   // 300 x 2ms = 0.6s de goc Kalman 1D on dinh
+
+  Serial.println("Dang do bias acc_earth_z (drone phai dung yen)...");
+  for (int i = 0; i < SETTLE; i++) {
+    imu_update();
+    delay(2);
+  }
+
+  double sum = 0;
+  for (int i = 0; i < samples; i++) {
+    imu_update();
+    float roll_r  = imu_get_roll_deg()  * DEG_TO_RAD;
+    float pitch_r = imu_get_pitch_deg() * DEG_TO_RAD;
+    float sr = sinf(roll_r),  cr = cosf(roll_r);
+    float sp = sinf(pitch_r), cp = cosf(pitch_r);
+    float ax = imu_get_acc_x_g();
+    float ay = imu_get_acc_y_g();
+    float az = imu_get_acc_z_g();
+    sum += (double)(-sp * ax + cp * sr * ay + cp * cr * az - 1.0f);
+    delay(2);
+  }
+
+  float bias = (float)(sum / samples);
+  Serial.printf("Bias acc_earth_z: %+.4f g (%+.2f cm/s^2)\n",
+                bias, bias * 981.0f);
+  return bias;
+}
+
 // ---- Các hàm lấy dữ liệu ----------------------------------------------------
 float imu_get_acc_x_g() { return imu_acc_x_g + ACC_OFFSET_X_G; }
 float imu_get_acc_y_g() { return imu_acc_y_g + ACC_OFFSET_Y_G; }

@@ -137,6 +137,16 @@ float pid_tilt_pitch(float angle_deg, float angle_sp_deg) {
 float pid_tilt_roll_output()  { return tilt_roll_out_dps;  }
 float pid_tilt_pitch_output() { return tilt_pitch_out_dps; }
 
+void pid_climb_seed(int collective, float climb_cms, float climb_sp_cms_in) {
+  float error = climb_sp_cms_in - climb_cms;
+  float p_term = constrain(KP_CLIMB * error, -P_LIM_CLIMB, P_LIM_CLIMB);
+  float target = constrain(collective, ESC_MIN_ARMED, ESC_MAX) - ESC_IDLE;
+  // Bù cả bước tích phân đầu tiên để nối tiếp ga trong giới hạn PID.
+  pid_climb_st.integral = constrain(target - p_term - KI_CLIMB * error * DT_CTRL,
+                                    0.0f, I_LIM_CLIMB);
+  pid_climb_st.prev_error = error;
+}
+
 // ---- Tốc độ lên xuống -------------------------------------------------------
 float pid_climb(float climb_cms, float climb_sp_cms_in) {
   return pid_step_climb(pid_climb_st, climb_sp_cms_in - climb_cms,

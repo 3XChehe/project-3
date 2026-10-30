@@ -48,6 +48,7 @@
 // ============================================================================
 
 #include "types.h"
+#include <esp_timer.h>
 
 // ============================================================================
 //                      CẤU HÌNH  —  SỬA TRỰC TIẾP TẠI ĐÂY
@@ -153,8 +154,8 @@ const float I_LIM_CLIMB  = 700.0f,  P_LIM_CLIMB  = 200.0f;
 //    (Right)               | trái (ay quá âm)          |                    | vào)               | +0.0241
 
 
-#define ACC_OFFSET_X_G   +0.0112f
-#define ACC_OFFSET_Y_G   +0.0101f
+#define ACC_OFFSET_X_G   +0.0092f
+#define ACC_OFFSET_Y_G   +0.0081f
 #define ACC_OFFSET_Z_G   +0.0337f
 
 // ---- Bộ lọc thông thấp bên trong ICM20602 ----------------------------------
@@ -166,7 +167,7 @@ const float I_LIM_CLIMB  = 700.0f,  P_LIM_CLIMB  = 200.0f;
 // #define DEBUG_ATTITUDE      // góc hiện tại so với góc mong muốn
 // #define DEBUG_RATE          // tốc độ góc mong muốn so với thực tế
 // #define DEBUG_ALTITUDE      // độ cao và tốc độ lên xuống sau KF
- #define DEBUG_RC            // giá trị các kênh tay điều khiển
+// #define DEBUG_RC            // giá trị các kênh tay điều khiển
 // #define DEBUG_ACC_OFFSET    // để kiểm tra kết quả bù lệch (drone phẳng: X~0, Y~0, Z~1)
 // #define DEBUG_LOOP_TIME     // chu kì vòng điều khiển, phải luôn ~2000 us
 // #define CALIBRATE_ACCEL     // BẬT ĐỂ CHẠY HIỆU CHỈNH ACC THỦ CÔNG (dừng bay, in 3 dòng offset)
@@ -176,6 +177,7 @@ const float I_LIM_CLIMB  = 700.0f,  P_LIM_CLIMB  = 200.0f;
 #define PERIOD_CTRL_MS    2       // 500 Hz
 #define PERIOD_RC_MS      2       // 500 Hz
 #define PERIOD_BARO_MS   10       // 100 Hz
+#define BARO_STALE_US    200000UL
 #define DT_CTRL      0.002f       // chu kì vòng điều khiển, tính bằng giây
 
 // Trạng thái cảm biến lúc khởi động
@@ -191,10 +193,11 @@ int  shared_rc_ch[17];
 bool shared_rc_ok = false;
 
 // baro_task ghi, control_task đọc
-float shared_baro_alt_m = 0.0f;
-bool  shared_baro_new   = false;
+BaroSample shared_baro_sample = {};
+BaroTiming shared_baro_timing = {};
+bool shared_baro_new = false;
 
-// control_task ghi, baro_task đọc để in debug
+// control_task ghi, baro_task và rc_task đọc
 float tlm_roll_deg, tlm_pitch_deg;
 float tlm_roll_sp_deg, tlm_pitch_sp_deg;
 float tlm_rate_roll_dps, tlm_rate_pitch_dps, tlm_rate_yaw_dps;
@@ -207,7 +210,11 @@ int   tlm_esc[5];
 int   tlm_flight_mode;
 bool  tlm_armed, tlm_rc_ok;
 uint32_t tlm_loop_us;
-
+uint64_t tlm_sample_time_us;
+BaroSample tlm_baro_sample = {};
+float tlm_acc_earth_z_g, tlm_acc_bias_cms2, tlm_acc_corrected_cms2;
+uint32_t tlm_baro_age_us = UINT32_MAX;
+bool tlm_baro_healthy, tlm_baro_correction_used;
 
 void setup() {
   Serial.begin(500000);
@@ -277,6 +284,7 @@ void rc_task(void *parameter) {
       for (int i = 1; i <= 16; i++) shared_rc_ch[i] = rc_get_channel(i);
       xSemaphoreGive(mtx_rc);
     }
+    rc_telemetry_update();
     vTaskDelayUntil(&wake, pdMS_TO_TICKS(PERIOD_RC_MS));
   }
 }
@@ -287,23 +295,32 @@ void rc_task(void *parameter) {
 // ============================================================================
 void baro_task(void *parameter) {
   TickType_t wake = xTaskGetTickCount();
+  uint32_t previous_start_us = 0;
+  BaroTiming timing = {};
   for (;;) {
-    if (sensor_present.baro) {
-      if (baro_update()) {
-        float alt_m = baro_get_altitude_m();
-        if (xSemaphoreTake(mtx_baro, 0) == pdTRUE) {
-          shared_baro_alt_m = alt_m;
-          shared_baro_new   = true;
-          xSemaphoreGive(mtx_baro);
-        }
+    uint32_t started_us = micros();
+    timing.period_us = previous_start_us ? started_us - previous_start_us : 0;
+    previous_start_us = started_us;
+
+    if (sensor_present.baro && baro_update()) {
+      BaroSample sample = baro_get_sample();
+      if (xSemaphoreTake(mtx_baro, 0) == pdTRUE) {
+        shared_baro_sample = sample;
+        shared_baro_new = true;
+        xSemaphoreGive(mtx_baro);
       }
     }
-
     debug_print();
-
+    timing.prev_work_us = micros() - started_us;
+    if (timing.prev_work_us > PERIOD_BARO_MS * 1000UL) timing.work_overruns++;
+    if (xSemaphoreTake(mtx_baro, 0) == pdTRUE) {
+      shared_baro_timing = timing;
+      xSemaphoreGive(mtx_baro);
+    }
     vTaskDelayUntil(&wake, pdMS_TO_TICKS(PERIOD_BARO_MS));
   }
 }
+
 
 
 // ============================================================================

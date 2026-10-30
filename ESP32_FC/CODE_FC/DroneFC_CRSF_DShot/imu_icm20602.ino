@@ -23,6 +23,7 @@
 // ============================================================================
 // ============================================================================
 //  ICM20602 - driver thanh ghi qua SPI, kèm bộ lọc Kalman 1D ước lượng góc.
+//  Phiên bản HIỆU CHỈNH GIA TỐC KẾ (ACCEL) THỦ CÔNG (như KyThuatUAV_FC_level_1).
 //
 //  Góc roll/pitch lấy từ Kalman 1D: gyro cho phần biến thiên nhanh, gia tốc kế
 //  kéo về cho khỏi trôi. Bản đầy đủ dùng thêm Madgwick/Mahony để có góc yaw từ
@@ -36,7 +37,7 @@
 
 #include <SPI.h>
 
-#define IMU_SPI_HZ   10000000      // 1 MHz (Hạ tốc độ xuống để chống nhiễu nếu dùng dây cắm dài)
+#define IMU_SPI_HZ   10000000      // 10 MHz
 
 // Địa chỉ thanh ghi
 #define REG_WHO_AM_I       0x75
@@ -54,6 +55,17 @@
 #define GYRO_LSB_PER_DPS   16.4f     // thang do +-2000 do/giay
 #define ACC_LSB_PER_G      2048.0f   // thang do +-16g
 
+// Dự phòng trường hợp người dùng chưa define ACC_OFFSET_*_G
+#ifndef ACC_OFFSET_X_G
+#define ACC_OFFSET_X_G 0.00f
+#endif
+#ifndef ACC_OFFSET_Y_G
+#define ACC_OFFSET_Y_G 0.00f
+#endif
+#ifndef ACC_OFFSET_Z_G
+#define ACC_OFFSET_Z_G 0.00f
+#endif
+
 static SPISettings imu_spi(IMU_SPI_HZ, MSBFIRST, SPI_MODE0);
 
 // Số đo thô đã quy đổi, CHƯA trừ bias
@@ -63,9 +75,6 @@ static int16_t imu_acc_x_lsb, imu_acc_y_lsb, imu_acc_z_lsb;
 
 // Bias gyro đo được lúc khởi động
 static float gyro_bias_roll_dps, gyro_bias_pitch_dps, gyro_bias_yaw_dps;
-
-// Bias acc đo được lúc khởi động
-static float acc_bias_x_g = 0.0f, acc_bias_y_g = 0.0f, acc_bias_z_g = 0.0f;
 
 // Góc suy ra từ riêng gia tốc kế, dùng làm phép đo cho Kalman
 static float acc_roll_deg, acc_pitch_deg;
@@ -112,64 +121,87 @@ void imu_init() {
   Serial.print("CONFIG 0x");        Serial.println(imu_read_reg(REG_CONFIG), HEX);
   Serial.print("ACCEL_CONFIG2 0x"); Serial.println(imu_read_reg(REG_ACCEL_CONFIG2), HEX);
 
+#ifdef CALIBRATE_ACCEL
+  imu_calibrate_accel();      // hàm này không bao giờ trả về (dừng bay để lấy offset)
+#endif
+
   imu_calibrate_gyro();
-  imu_calibrate_accel();
 }
 
 
-// ===== Hiệu chỉnh gia tốc kế =====
-// Tự động chạy lúc khởi động để lấy bias.
-// Lặp lại tới khi drone đứng yên và nằm phẳng.
+#ifdef CALIBRATE_ACCEL
+// ===== Hiệu chỉnh gia tốc kế (THỦ CÔNG) =====
+// Chỉ chạy khi bật #define CALIBRATE_ACCEL trong file DroneFC_CRSF_DShot_ManualAcc.ino.
+// Đo xong thì in ra đúng ba dòng cần dán vào khối CẤU HÌNH rồi dừng hẳn -
+// cố tình không cho bay ở chế độ này để đảm bảo an toàn.
+//
+// Nguyên lý: đặt drone nằm phẳng thì đúng ra gia tốc kế phải đọc
+// X = 0, Y = 0, Z = +1g. Lệch bao nhiêu so với ba số đó chính là sai số cần bù.
 void imu_calibrate_accel() {
-  const int   SAMPLES        = 500;
-  const float STABLE_LIMIT   = 5.0f;   // ngưỡng lệch cho gia tốc kế
+  const int SAMPLES = 2000;          // 2000 mẫu x 2ms = 4 giây
 
-  float sum_x = 0, sum_y = 0, sum_z = 0;
-  float prev_x = 0, prev_y = 0, prev_z = 0;
+  Serial.println();
+  Serial.println("=========================================");
+  Serial.println("     HIEU CHINH GIA TOC KE (THU CONG)");
+  Serial.println("=========================================");
+  Serial.println("Dat drone nam phang tren mat ban phang.");
+  Serial.println("Bo tay ra, dung cham vao ban trong luc do.");
 
-  Serial.println("bat dau hieu chinh acc");
-
-  while (1) {
-    prev_x = sum_x;  prev_y = sum_y;  prev_z = sum_z;
-    sum_x = 0;  sum_y = 0;  sum_z = 0;
-
-    digitalWrite(PIN_IMU_LED, HIGH);
-    for (int i = 0; i < SAMPLES; i++) {
-      imu_read_raw();
-      sum_x += imu_acc_x_g;            // lấy số THÔ
-      sum_y += imu_acc_y_g;
-      sum_z += imu_acc_z_g;
-      delay(2);
-    }
-
-    Serial.println("Dang hieu chinh acc - Khong di chuyen Drone!");
-
-    if (fabsf(sum_x - prev_x) < STABLE_LIMIT &&
-        fabsf(sum_y - prev_y) < STABLE_LIMIT &&
-        fabsf(sum_z - prev_z) < STABLE_LIMIT) {
-      Serial.println("cali acc thanh cong");
-      digitalWrite(PIN_IMU_LED, LOW);
-      break;
-    }
+  for (int s = 5; s > 0; s--) {
+    Serial.printf("Bat dau sau %d giay...\n", s);
+    delay(1000);
   }
+  Serial.println("Dang do, giu yen...");
+
+  double sum_x = 0, sum_y = 0, sum_z = 0;
+  for (int i = 0; i < SAMPLES; i++) {
+    imu_read_raw();
+    sum_x += imu_acc_x_g;            // lấy số THÔ, chưa cộng offset cũ
+    sum_y += imu_acc_y_g;
+    sum_z += imu_acc_z_g;
+    if ((i % 500) == 0) digitalWrite(PIN_IMU_LED, !digitalRead(PIN_IMU_LED));
+    delay(2);
+  }
+  digitalWrite(PIN_IMU_LED, LOW);
 
   float mean_x = sum_x / SAMPLES;
   float mean_y = sum_y / SAMPLES;
   float mean_z = sum_z / SAMPLES;
 
-  if (mean_z < 0.80f || fabsf(mean_x) > 0.30f || fabsf(mean_y) > 0.30f) {
-    Serial.println("!! LOI: Drone khong nam phang, acc cali co the sai!");
+  Serial.println();
+  Serial.printf("Do duoc:  X = %+.4f   Y = %+.4f   Z = %+.4f  (g)\n",
+                mean_x, mean_y, mean_z);
+  Serial.println();
+
+  // Kiểm tra tư thế trước khi tin kết quả
+  if (mean_z < 0.80f) {
+    Serial.println("!! LOI: Z phai gan +1.00 g khi drone nam phang.");
+    Serial.println("   Z am  -> drone dang bi lat nguoc.");
+    Serial.println("   Z nho -> drone dang dung nghieng.");
+    Serial.println("   Dat lai cho dung roi khoi dong lai mach.");
+  } else if (fabsf(mean_x) > 0.30f || fabsf(mean_y) > 0.30f) {
+    Serial.println("!! LOI: X hoac Y lech qua nhieu (>0.30 g).");
+    Serial.println("   Mat ban khong phang, hoac cam bien gan lech tren mach.");
+    Serial.println("   Kiem tra lai roi khoi dong lai mach.");
+  } else {
+    Serial.println("Chep DUNG ba dong duoi day, thay vao khoi CAU HINH");
+    Serial.println("trong file DroneFC_CRSF_DShot_ManualAcc.ino:");
+    Serial.println();
+    Serial.printf("#define ACC_OFFSET_X_G   %+.4ff\n", -mean_x);
+    Serial.printf("#define ACC_OFFSET_Y_G   %+.4ff\n", -mean_y);
+    Serial.printf("#define ACC_OFFSET_Z_G   %+.4ff\n", 1.0f - mean_z);
+    Serial.println();
+    Serial.println("Xong thi TAT (comment lai) #define CALIBRATE_ACCEL roi nap lai.");
+    Serial.println("Muon kiem tra: bat DEBUG_ACC_OFFSET, phai thay X~0 Y~0 Z~1.");
   }
 
-  acc_bias_x_g = -mean_x;
-  acc_bias_y_g = -mean_y;
-  acc_bias_z_g = 1.0f - mean_z;
-
-  Serial.print("bias acc (g) ");
-  Serial.print(acc_bias_x_g, 4); Serial.print(" | ");
-  Serial.print(acc_bias_y_g, 4); Serial.print(" | ");
-  Serial.println(acc_bias_z_g, 4);
+  Serial.println("=========================================");
+  while (1) {                        // dừng hẳn, không cho bay ở chế độ cali
+    digitalWrite(PIN_IMU_LED, !digitalRead(PIN_IMU_LED));
+    delay(500);
+  }
 }
+#endif
 
 
 // ===== Hiệu chỉnh gyro: lặp lại tới khi drone thật sự đứng yên =====
@@ -247,11 +279,11 @@ void imu_read_raw() {
   imu_acc_y_g = (float)ay_lsb / ACC_LSB_PER_G;
   imu_acc_z_g = (float)az_lsb / ACC_LSB_PER_G;
 
-  // Góc từ gia tốc kế, tính trên giá trị đã bù lệch.
+  // Góc từ gia tốc kế, tính trên giá trị đã bù lệch THỦ CÔNG.
   // Roll chủ yếu từ acc_Y và acc_Z, pitch chủ yếu từ acc_X và acc_Z.
-  float ax = imu_acc_x_g + acc_bias_x_g;
-  float ay = imu_acc_y_g + acc_bias_y_g;
-  float az = imu_acc_z_g + acc_bias_z_g;
+  float ax = imu_acc_x_g + ACC_OFFSET_X_G;
+  float ay = imu_acc_y_g + ACC_OFFSET_Y_G;
+  float az = imu_acc_z_g + ACC_OFFSET_Z_G;
 
   acc_roll_deg  =  atanf(ay / sqrtf(ax * ax + az * az)) * RAD_TO_DEG;
   acc_pitch_deg = -atanf(ax / sqrtf(ay * ay + az * az)) * RAD_TO_DEG;
@@ -320,9 +352,9 @@ void imu_read_gyro_raw(int16_t &x, int16_t &y, int16_t &z) {
 }
 
 // ---- Các hàm lấy dữ liệu ----------------------------------------------------
-float imu_get_acc_x_g() { return imu_acc_x_g + acc_bias_x_g; }
-float imu_get_acc_y_g() { return imu_acc_y_g + acc_bias_y_g; }
-float imu_get_acc_z_g() { return imu_acc_z_g + acc_bias_z_g; }
+float imu_get_acc_x_g() { return imu_acc_x_g + ACC_OFFSET_X_G; }
+float imu_get_acc_y_g() { return imu_acc_y_g + ACC_OFFSET_Y_G; }
+float imu_get_acc_z_g() { return imu_acc_z_g + ACC_OFFSET_Z_G; }
 int16_t imu_get_acc_x_lsb() { return imu_acc_x_lsb; }
 int16_t imu_get_acc_y_lsb() { return imu_acc_y_lsb; }
 int16_t imu_get_acc_z_lsb() { return imu_acc_z_lsb; }

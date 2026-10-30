@@ -225,6 +225,83 @@ static uint8_t crsf_crc8(
     return crc;
 }
 
+static void crsf_put_u16(uint8_t *dst, uint16_t value)
+{
+    dst[0] = value >> 8;
+    dst[1] = value & 0xff;
+}
+
+void rc_telemetry_update()
+{
+    static uint32_t last_send_ms = 0;
+    static uint8_t slot = 0;
+    const uint32_t now = millis();
+    if (now - last_send_ms < 40) return;
+    last_send_ms = now;
+
+    float pitch, roll, altitude, climb;
+    int mode;
+    bool baro_healthy;
+    uint64_t sample_time;
+    if (xSemaphoreTake(mtx_tlm, 0) != pdTRUE) return;
+    pitch = tlm_pitch_deg;
+    roll = tlm_roll_deg;
+    altitude = tlm_alt_cm;
+    climb = tlm_climb_cms;
+    mode = tlm_flight_mode;
+    baro_healthy = tlm_baro_healthy;
+    sample_time = tlm_sample_time_us;
+    xSemaphoreGive(mtx_tlm);
+
+    const uint64_t now_us = esp_timer_get_time();
+    if (!sample_time || now_us < sample_time || now_us - sample_time > 200000) return;
+
+    uint8_t frame[20] = { CRSF_ADDR_FC, 0, 0 };
+    uint8_t payload_size = 0;
+    const uint8_t current_slot = slot;
+    slot = (slot + 1) % 4;
+    if (current_slot == 0) {
+        if (!isfinite(pitch) || !isfinite(roll)) return;
+        frame[2] = 0x1e;
+        pitch = constrain(pitch, -180.0f, 180.0f);
+        roll = constrain(roll, -180.0f, 180.0f);
+        crsf_put_u16(&frame[3], (uint16_t)(int16_t)lroundf(pitch * 174.532925f));
+        crsf_put_u16(&frame[5], (uint16_t)(int16_t)lroundf(roll * 174.532925f));
+        crsf_put_u16(&frame[7], 0);
+        payload_size = 6;
+    } else if (current_slot == 1) {
+        if (!baro_healthy || !isfinite(altitude)) return;
+        frame[2] = 0x09;
+        const int32_t altitude_dm = lroundf(constrain(altitude / 10.0f, -10000.0f, 327655.0f));
+        uint16_t packed;
+        if (altitude_dm < 22768) {
+            packed = (uint16_t)(altitude_dm + 10000);
+        } else {
+            packed = (uint16_t)(0x8000 | ((altitude_dm + 5) / 10));
+        }
+        crsf_put_u16(&frame[3], packed);
+        payload_size = 2;
+    } else if (current_slot == 2) {
+        if (!baro_healthy || !isfinite(climb)) return;
+        frame[2] = 0x07;
+        climb = constrain(climb, -32768.0f, 32767.0f);
+        crsf_put_u16(&frame[3], (uint16_t)(int16_t)lroundf(climb));
+        payload_size = 2;
+    } else {
+        frame[2] = 0x21;
+        const char *name = mode == MODE_ALT_HOLD ? "ALT_HOLD" :
+                           mode == MODE_FAILSAFE ? "FAILSAFE" : "ANGLE";
+        payload_size = strlen(name) + 1;
+        memcpy(&frame[3], name, payload_size);
+    }
+    frame[1] = payload_size + 2;
+    frame[3 + payload_size] = crsf_crc8(&frame[2], payload_size + 1);
+    const uint8_t frame_size = payload_size + 4;
+    if (crsf_uart.availableForWrite() >= frame_size) {
+        crsf_uart.write(frame, frame_size);
+    }
+}
+
 // ============================================================================
 // INITIALIZE
 // ============================================================================

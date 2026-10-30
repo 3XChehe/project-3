@@ -111,6 +111,9 @@ static float baro_press_pa  = 0.0f;
 static float baro_alt_abs_m = 0.0f;   // cao độ tuyệt đối so với mực nước biển
 static float baro_alt_ref_m = 0.0f;   // cao độ đo được lúc khởi động
 static bool  baro_ready     = false;
+static uint32_t baro_sample_id = 0;
+static uint64_t baro_sample_time_us = 0;
+static bool baro_reference_valid = false;
 
 // Hệ số hiệu chỉnh riêng của từng con chip, đọc từ thanh ghi CALIB
 struct BaroCalib {
@@ -303,9 +306,17 @@ bool baro_update() {
   double temp_c   = baro_compensate_temp(raw_temp);
   double press_pa = baro_compensate_press(raw_press, temp_c);
 
-  baro_temp_c    = (float)temp_c;
-  baro_press_pa  = (float)press_pa;
-  baro_alt_abs_m = (float)baro_press_to_altitude_m(press_pa);
+  if (!isfinite(temp_c) || !isfinite(press_pa) || press_pa <= 0.0) return false;
+  float temperature_c = (float)temp_c;
+  float pressure_pa = (float)press_pa;
+  float altitude_m = (float)baro_press_to_altitude_m(press_pa);
+  if (!isfinite(temperature_c) || !isfinite(pressure_pa) || !isfinite(altitude_m)) return false;
+
+  baro_temp_c = temperature_c;
+  baro_press_pa = pressure_pa;
+  baro_alt_abs_m = altitude_m;
+  baro_sample_time_us = esp_timer_get_time();
+  baro_sample_id++;
   return true;
 }
 
@@ -327,6 +338,7 @@ static void baro_measure_reference(uint16_t samples) {
   if (got == 0) return;
 
   baro_alt_ref_m = (float)(sum / got);
+  baro_reference_valid = isfinite(baro_alt_ref_m);
   Serial.print("Cao do goc = ");
   Serial.println(baro_alt_ref_m, 3);
 }
@@ -352,6 +364,9 @@ bool baro_init() {
   delay(10);
 
   baro_ready = false;
+  baro_sample_id = 0;
+  baro_sample_time_us = 0;
+  baro_reference_valid = false;
 
   // Bo qua kiem tra WHO AM I (dinh danh chip) de van tiep tuc khoi dong
   baro_detect();
@@ -375,6 +390,21 @@ bool baro_init() {
 
 
 float baro_get_altitude_m() { return baro_alt_abs_m - baro_alt_ref_m; }
+float baro_get_pressure_pa() { return baro_press_pa; }
+float baro_get_temperature_c() { return baro_temp_c; }
+uint32_t baro_get_sample_id() { return baro_sample_id; }
+
+BaroSample baro_get_sample() {
+  BaroSample sample = {};
+  sample.sample_time_us = baro_sample_time_us;
+  sample.altitude_m = baro_get_altitude_m();
+  sample.pressure_pa = baro_press_pa;
+  sample.temperature_c = baro_temp_c;
+  sample.sample_id = baro_sample_id;
+  sample.valid = true;
+  sample.reference_valid = baro_reference_valid;
+  return sample;
+}
 
 bool baro_is_present() {
   return baro_ready;

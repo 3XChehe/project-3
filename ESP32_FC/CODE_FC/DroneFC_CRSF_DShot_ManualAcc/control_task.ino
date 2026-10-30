@@ -43,7 +43,12 @@ int  flight_mode = MODE_ANGLE;
 // khởi động. Muốn arm phải gạt công tắc xuống rồi gạt lên lại.
 int  arm_sw_prev = 2;
 
-float baro_alt_m;      // độ cao baro mới nhất, đơn vị mét
+BaroSample baro_sample = {};
+float baro_alt_m;
+bool baro_is_new;
+bool baro_healthy;
+bool baro_correction_used;
+uint32_t baro_age_us = UINT32_MAX;
 
 unsigned long failsafe_start_ms;
 uint32_t loop_period_us;
@@ -58,6 +63,7 @@ void control_task(void *parameter) {
     t_prev_us = t_now_us;
 
     // ---------- 1. Cảm biến và ước lượng trạng thái ----------
+    uint64_t sample_time_us = esp_timer_get_time();
     imu_update();
     acc_x_g        = imu_get_acc_x_g();
     acc_y_g        = imu_get_acc_y_g();
@@ -72,16 +78,20 @@ void control_task(void *parameter) {
     float sr = sinf(roll_deg  * DEG_TO_RAD), cr = cosf(roll_deg  * DEG_TO_RAD);
     float sp = sinf(pitch_deg * DEG_TO_RAD), cp = cosf(pitch_deg * DEG_TO_RAD);
     acc_earth_z_g = -sp * acc_x_g + cp * sr * acc_y_g + cp * cr * acc_z_g - 1.0f;
+    // Bias acc_earth_z duoc KF 3-state (altitude_kf.ino) tu uoc luong — khong can tru o day
 
     // KF độ cao
     baro_fetch_shared();
-    alt_kf_update(baro_alt_m, acc_earth_z_g);
+    baro_correction_used = alt_kf_update(baro_alt_m, acc_earth_z_g,
+                                         baro_is_new && baro_healthy);
 
     // ---------- 2. Lệnh từ tay điều khiển ----------
     rc_ok_prev = rc_ok;
     rc_fetch_and_map();
 
     // ---------- 3. Arm / disarm ----------
+    int previous_mode = flight_mode;
+    bool was_armed = armed;
     if (rc_ok) {
       if (rc_ch[CH_ARM] != 2) {
         armed = false;
@@ -93,6 +103,11 @@ void control_task(void *parameter) {
       if      (rc_ch[CH_MODE] == 0) flight_mode = MODE_FOR_SW_0;
       else if (rc_ch[CH_MODE] == 1) flight_mode = MODE_FOR_SW_1;
       else                          flight_mode = MODE_FOR_SW_2;
+      if (flight_mode == MODE_ALT_HOLD &&
+          (!baro_healthy || !isfinite(alt_kf_get_altitude_cm()) ||
+           !isfinite(alt_kf_get_climb_cms()) || !isfinite(alt_kf_get_acc_bias_cms2()))) {
+        flight_mode = MODE_ANGLE;
+      }
 
     } else if (armed && sensor_present.baro) {
       if (rc_ok_prev) failsafe_start_ms = millis();
@@ -111,6 +126,12 @@ void control_task(void *parameter) {
           (millis() - failsafe_start_ms) > 2000) {
         armed = false;
       }
+    }
+
+    if (armed && was_armed && previous_mode == MODE_ANGLE &&
+        (flight_mode == MODE_ALT_HOLD || flight_mode == MODE_FAILSAFE)) {
+      float setpoint = flight_mode == MODE_FAILSAFE ? FAILSAFE_DESCENT_CMS : climb_sp_cms;
+      pid_climb_seed(u_throttle, alt_kf_get_climb_cms(), setpoint);
     }
 
     // ---------- 4. Bộ điều khiển ----------
@@ -148,7 +169,7 @@ void control_task(void *parameter) {
     if (!armed) { esc_1 = esc_2 = esc_3 = esc_4 = ESC_IDLE; }
     esc_write(esc_1, esc_2, esc_3, esc_4);
 
-    telemetry_snapshot();
+    telemetry_snapshot(sample_time_us);
     vTaskDelayUntil(&wake, pdMS_TO_TICKS(PERIOD_CTRL_MS));
   }
 }
@@ -185,10 +206,19 @@ void mode_failsafe() {
 // ============================================================================
 
 void baro_fetch_shared() {
+  baro_is_new = false;
   if (xSemaphoreTake(mtx_baro, 0) == pdTRUE) {
-    baro_alt_m = shared_baro_alt_m;
+    baro_sample = shared_baro_sample;
+    baro_is_new = shared_baro_new;
+    shared_baro_new = false;
     xSemaphoreGive(mtx_baro);
   }
+  baro_alt_m = baro_sample.altitude_m;
+  uint64_t now_us = esp_timer_get_time();
+  uint64_t age_us = baro_sample.valid ? now_us - baro_sample.sample_time_us : UINT64_MAX;
+  baro_age_us = age_us > UINT32_MAX ? UINT32_MAX : (uint32_t)age_us;
+  baro_healthy = sensor_present.baro && baro_sample.valid &&
+                 baro_sample.reference_valid && age_us <= BARO_STALE_US;
 }
 
 int rc_switch_position(int ch_value) {
@@ -233,8 +263,10 @@ void esc_clamp(int lo, int hi) {
   if (esc_4 < lo) esc_4 = lo;  if (esc_4 > hi) esc_4 = hi;
 }
 
-void telemetry_snapshot() {
+void telemetry_snapshot(uint64_t sample_time_us) {
   if (xSemaphoreTake(mtx_tlm, 0) != pdTRUE) return;
+
+  tlm_sample_time_us = sample_time_us;
 
   tlm_roll_deg     = roll_deg;      tlm_pitch_deg    = pitch_deg;
   tlm_roll_sp_deg  = roll_sp_deg;   tlm_pitch_sp_deg = pitch_sp_deg;
@@ -249,6 +281,13 @@ void telemetry_snapshot() {
   tlm_climb_cms    = alt_kf_get_climb_cms();
   tlm_climb_sp_cms = climb_sp_cms;
   tlm_baro_alt_cm  = baro_alt_m * 100.0f;
+  tlm_baro_sample = baro_sample;
+  tlm_baro_age_us = baro_age_us;
+  tlm_baro_healthy = baro_healthy;
+  tlm_baro_correction_used = baro_correction_used;
+  tlm_acc_earth_z_g = acc_earth_z_g;
+  tlm_acc_bias_cms2 = alt_kf_get_acc_bias_cms2();
+  tlm_acc_corrected_cms2 = acc_earth_z_g * 981.0f - tlm_acc_bias_cms2;
 
   tlm_acc_x_g = acc_x_g;  tlm_acc_y_g = acc_y_g;  tlm_acc_z_g = acc_z_g;
 

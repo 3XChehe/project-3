@@ -67,7 +67,11 @@
 #define CRSF_ADDR_FC           0xC8
 #define CRSF_ADDR_BROADCAST    0xEE
 
+#define CRSF_TYPE_VARIO        0x07
+#define CRSF_TYPE_BARO_ALTITUDE 0x09
 #define CRSF_TYPE_RC_CHANNELS  0x16
+#define CRSF_TYPE_ATTITUDE     0x1E
+#define CRSF_TYPE_FLIGHT_MODE  0x21
 
 #define CRSF_CHANNEL_COUNT     16
 #define CRSF_CHANNEL_BITS      11
@@ -891,4 +895,100 @@ bool rc_has_signal()
         millis() - crsf_last_frame_ms
         <= CRSF_TIMEOUT_MS
     );
+}
+
+// ============================================================================
+// CRSF TELEMETRY TRANSMISSION (FC -> RX -> Pocket EdgeTX)
+// ============================================================================
+
+// ----------------------------------------------------------------------------
+// Gửi Attitude: Pitch, Roll, Yaw (Frame 0x1E)
+// EdgeTX sẽ ánh xạ vào các sensor: Ptch, Roll, Yaw
+// ----------------------------------------------------------------------------
+void rc_send_telemetry_attitude(float roll_deg, float pitch_deg, float yaw_deg)
+{
+    // Đổi deg sang rad * 10000: 1 deg = (PI / 180) * 10000 = 174.532925f
+    int16_t pitch = (int16_t)(pitch_deg * 174.532925f);
+    int16_t roll  = (int16_t)(roll_deg  * 174.532925f);
+    int16_t yaw   = (int16_t)(yaw_deg   * 174.532925f);
+
+    uint8_t frame[10];
+    frame[0] = CRSF_ADDR_FC;         // 0xC8
+    frame[1] = 8;                    // Length = type(1) + payload(6) + crc(1) = 8
+    frame[2] = CRSF_TYPE_ATTITUDE;   // 0x1E
+    frame[3] = (uint8_t)(pitch >> 8);
+    frame[4] = (uint8_t)(pitch & 0xFF);
+    frame[5] = (uint8_t)(roll >> 8);
+    frame[6] = (uint8_t)(roll & 0xFF);
+    frame[7] = (uint8_t)(yaw >> 8);
+    frame[8] = (uint8_t)(yaw & 0xFF);
+    frame[9] = crsf_crc8(&frame[2], 7);
+
+    crsf_uart.write(frame, 10);
+}
+
+// ----------------------------------------------------------------------------
+// Gửi Barometric Altitude (Frame 0x09)
+// EdgeTX sẽ ánh xạ vào sensor Alt (độ cao tính bằng mét)
+// ----------------------------------------------------------------------------
+void rc_send_telemetry_baro(float alt_m, float climb_cms)
+{
+    // Đổi m sang dm với offset 10000 theo chuẩn CRSF
+    int32_t alt_dm = (int32_t)(alt_m * 10.0f) + 10000;
+    if (alt_dm < 0) alt_dm = 0;
+    if (alt_dm > 0x7FFF) alt_dm = 0x7FFF;
+    uint16_t packed_alt = (uint16_t)alt_dm;
+
+    int8_t packed_vspd = (int8_t)constrain((int)(climb_cms / 10.0f), -127, 127);
+
+    uint8_t frame[7];
+    frame[0] = CRSF_ADDR_FC;              // 0xC8
+    frame[1] = 5;                         // Length = type(1) + payload(3) + crc(1) = 5
+    frame[2] = CRSF_TYPE_BARO_ALTITUDE;   // 0x09
+    frame[3] = (uint8_t)(packed_alt >> 8);
+    frame[4] = (uint8_t)(packed_alt & 0xFF);
+    frame[5] = (uint8_t)packed_vspd;
+    frame[6] = crsf_crc8(&frame[2], 4);
+
+    crsf_uart.write(frame, 7);
+}
+
+// ----------------------------------------------------------------------------
+// Gửi Variometer / Tốc độ lên xuống (Frame 0x07)
+// EdgeTX sẽ ánh xạ vào sensor VSpd (đơn vị m/s, truyền lên giá trị cm/s)
+// ----------------------------------------------------------------------------
+void rc_send_telemetry_vario(float climb_cms)
+{
+    int16_t vspd = (int16_t)constrain((int)climb_cms, -32000, 32000);
+
+    uint8_t frame[6];
+    frame[0] = CRSF_ADDR_FC;        // 0xC8
+    frame[1] = 4;                   // Length = type(1) + payload(2) + crc(1) = 4
+    frame[2] = CRSF_TYPE_VARIO;     // 0x07
+    frame[3] = (uint8_t)(vspd >> 8);
+    frame[4] = (uint8_t)(vspd & 0xFF);
+    frame[5] = crsf_crc8(&frame[2], 3);
+
+    crsf_uart.write(frame, 6);
+}
+
+// ----------------------------------------------------------------------------
+// Gửi Chế độ bay (Frame 0x21 - Flight Mode)
+// EdgeTX sẽ ánh xạ vào sensor FM (chuỗi ký tự như "ANGLE", "ALTHOLD")
+// ----------------------------------------------------------------------------
+void rc_send_telemetry_flight_mode(const char *mode_str)
+{
+    if (!mode_str) return;
+    uint8_t str_len = (uint8_t)strlen(mode_str);
+    if (str_len > 10) str_len = 10;
+
+    uint8_t frame[16];
+    frame[0] = CRSF_ADDR_FC;
+    frame[1] = str_len + 1 + 2; // type(1) + str + '\0' + crc(1)
+    frame[2] = CRSF_TYPE_FLIGHT_MODE;
+    memcpy(&frame[3], mode_str, str_len);
+    frame[3 + str_len] = '\0';
+    frame[3 + str_len + 1] = crsf_crc8(&frame[2], str_len + 2);
+
+    crsf_uart.write(frame, frame[1] + 2);
 }

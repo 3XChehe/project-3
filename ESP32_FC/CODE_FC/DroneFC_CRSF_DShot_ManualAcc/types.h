@@ -34,6 +34,22 @@ struct SensorPresent {
   bool baro;
 };
 
+struct BaroSample {
+  uint64_t sample_time_us;
+  float altitude_m;
+  float pressure_pa;
+  float temperature_c;
+  uint32_t sample_id;
+  bool valid;
+  bool reference_valid;
+};
+
+struct BaroTiming {
+  uint32_t prev_work_us;
+  uint32_t period_us;
+  uint32_t work_overruns;
+};
+
 // Khung dữ liệu CRSF đã giải mã
 struct CrsfChannels {
   uint16_t ch[16];    // 16 kênh, giá trị 172-1811 (CRSF native)

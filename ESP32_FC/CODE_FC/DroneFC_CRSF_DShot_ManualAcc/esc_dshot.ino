@@ -41,109 +41,117 @@
 // RMT clock mặc định 80 MHz → 1 tick = 12.5 ns
 // DShot600: bit period = 1.67 µs = 133.6 ticks (~134 ticks)
 
-#define DSHOT_T1H_TICKS     100   // bit '1' high duration: 1.25 µs = 100 ticks
-#define DSHOT_T1L_TICKS      34   // bit '1' low duration:  0.42 µs = 34 ticks
-#define DSHOT_T0H_TICKS      50   // bit '0' high duration: 0.625 µs = 50 ticks
-#define DSHOT_T0L_TICKS      84   // bit '0' low duration:  1.045 µs = 84 ticks
+#define DSHOT_T1H_TICKS 100 // bit '1' high duration: 1.25 µs = 100 ticks
+#define DSHOT_T1L_TICKS 34  // bit '1' low duration:  0.42 µs = 34 ticks
+#define DSHOT_T0H_TICKS 50  // bit '0' high duration: 0.625 µs = 50 ticks
+#define DSHOT_T0L_TICKS 84  // bit '0' low duration:  1.045 µs = 84 ticks
 
-#define DSHOT_FRAME_BITS     16
-#define DSHOT_THROTTLE_MIN   48     // giá trị throttle nhỏ nhất khi armed
-#define DSHOT_THROTTLE_MAX   2047
+#define DSHOT_FRAME_BITS 16
+#define DSHOT_THROTTLE_MIN 48 // giá trị throttle nhỏ nhất khi armed
+#define DSHOT_THROTTLE_MAX 2047
 
 // Mapping RMT channels cho 4 ESC
 static const rmt_channel_t dshot_rmt_ch[4] = {
-  RMT_CHANNEL_0,   // Motor 1
-  RMT_CHANNEL_1,   // Motor 2
-  RMT_CHANNEL_2,   // Motor 3
-  RMT_CHANNEL_3    // Motor 4
+    RMT_CHANNEL_0, // Motor 1
+    RMT_CHANNEL_1, // Motor 2
+    RMT_CHANNEL_2, // Motor 3
+    RMT_CHANNEL_3  // Motor 4
 };
 
 static const gpio_num_t dshot_pins[4] = {
-  (gpio_num_t)PIN_ESC_1,
-  (gpio_num_t)PIN_ESC_2,
-  (gpio_num_t)PIN_ESC_3,
-  (gpio_num_t)PIN_ESC_4
-};
+    (gpio_num_t)PIN_ESC_1,
+    (gpio_num_t)PIN_ESC_2,
+    (gpio_num_t)PIN_ESC_3,
+    (gpio_num_t)PIN_ESC_4};
 
 // Buffer cho RMT items (16 bit + 1 end marker)
 static rmt_item32_t dshot_items[4][DSHOT_FRAME_BITS + 1];
-
 
 // ---- Tính CRC DShot ---------------------------------------------------------
 // CRC = XOR của ba nhóm 4 bit: (throttle >> 7) ^ (throttle >> 3) ^ (throttle & 0x0F)
 // Nhưng thực tế tính trên 12 bit gốc (11 bit throttle + 1 bit telemetry):
 //   value = (throttle << 1) | telem
 //   crc = (value ^ (value >> 4) ^ (value >> 8)) & 0x0F
-static uint16_t dshot_encode(uint16_t throttle, bool telem_request) {
+static uint16_t dshot_encode(uint16_t throttle, bool telem_request)
+{
   uint16_t value = (throttle << 1) | (telem_request ? 1 : 0);
   uint16_t crc = (value ^ (value >> 4) ^ (value >> 8)) & 0x0F;
   return (value << 4) | crc;
 }
 
-
 // ---- Chuyển frame 16 bit thành RMT items ------------------------------------
-static void dshot_build_rmt_items(rmt_item32_t *items, uint16_t frame) {
-  for (int i = 0; i < DSHOT_FRAME_BITS; i++) {
+static void dshot_build_rmt_items(rmt_item32_t *items, uint16_t frame)
+{
+  for (int i = 0; i < DSHOT_FRAME_BITS; i++)
+  {
     // MSB first
-    if (frame & (1 << (15 - i))) {
+    if (frame & (1 << (15 - i)))
+    {
       // Bit '1'
       items[i].duration0 = DSHOT_T1H_TICKS;
-      items[i].level0    = 1;
+      items[i].level0 = 1;
       items[i].duration1 = DSHOT_T1L_TICKS;
-      items[i].level1    = 0;
-    } else {
+      items[i].level1 = 0;
+    }
+    else
+    {
       // Bit '0'
       items[i].duration0 = DSHOT_T0H_TICKS;
-      items[i].level0    = 1;
+      items[i].level0 = 1;
       items[i].duration1 = DSHOT_T0L_TICKS;
-      items[i].level1    = 0;
+      items[i].level1 = 0;
     }
   }
   // End marker
   items[DSHOT_FRAME_BITS].duration0 = 0;
-  items[DSHOT_FRAME_BITS].level0    = 0;
+  items[DSHOT_FRAME_BITS].level0 = 0;
   items[DSHOT_FRAME_BITS].duration1 = 0;
-  items[DSHOT_FRAME_BITS].level1    = 0;
+  items[DSHOT_FRAME_BITS].level1 = 0;
 }
-
 
 // ---- Gửi DShot frame cho 1 ESC qua RMT -------------------------------------
-static void dshot_send_one(int motor_idx, uint16_t throttle) {
-  uint16_t frame = dshot_encode(throttle, false);  // không yêu cầu telemetry
+static void dshot_send_one(int motor_idx, uint16_t throttle)
+{
+  uint16_t frame = dshot_encode(throttle, false); // không yêu cầu telemetry
   dshot_build_rmt_items(dshot_items[motor_idx], frame);
   rmt_write_items(dshot_rmt_ch[motor_idx], dshot_items[motor_idx],
-                  DSHOT_FRAME_BITS + 1, false);    // false = không chờ xong
+                  DSHOT_FRAME_BITS + 1, false); // false = không chờ xong
 }
-
 
 // ---- Chuyển đổi từ thang nội bộ 800-1600 sang DShot 0-2047 -----------------
 // Giữ nguyên thang 800-1600 trong toàn bộ code điều khiển (PID, mixer, v.v.)
 // để không phải sửa logic đã kiểm chứng. Chỉ chuyển đổi ở đây trước khi gửi.
-static uint16_t internal_to_dshot(int internal_value) {
-  if (internal_value <= ESC_IDLE) return 0;         // disarmed
-  if (internal_value < ESC_MIN_ARMED) return 0;     // dưới mức arm
+static uint16_t internal_to_dshot(int internal_value)
+{
+  if (internal_value <= ESC_IDLE)
+    return 0; // disarmed
+  if (internal_value < ESC_MIN_ARMED)
+    return 0; // dưới mức arm
 
   // Map ESC_MIN_ARMED..ESC_MAX → DSHOT_THROTTLE_MIN..DSHOT_THROTTLE_MAX
   long dshot_val = map((long)internal_value, ESC_MIN_ARMED, ESC_MAX,
                        DSHOT_THROTTLE_MIN, DSHOT_THROTTLE_MAX);
 
-  if (dshot_val < DSHOT_THROTTLE_MIN) dshot_val = DSHOT_THROTTLE_MIN;
-  if (dshot_val > DSHOT_THROTTLE_MAX) dshot_val = DSHOT_THROTTLE_MAX;
+  if (dshot_val < DSHOT_THROTTLE_MIN)
+    dshot_val = DSHOT_THROTTLE_MIN;
+  if (dshot_val > DSHOT_THROTTLE_MAX)
+    dshot_val = DSHOT_THROTTLE_MAX;
 
   return (uint16_t)dshot_val;
 }
-
 
 // ============================================================================
 //  API công khai — cùng giao diện với bản PWM cũ
 // ============================================================================
 
-void esc_init() {
+void esc_init()
+{
   // Cấu hình RMT cho 4 kênh DShot
-  for (int i = 0; i < 4; i++) {
+  for (int i = 0; i < 4; i++)
+  {
     rmt_config_t cfg = RMT_DEFAULT_CONFIG_TX(dshot_pins[i], dshot_rmt_ch[i]);
-    cfg.clk_div = 1;                // clock divider = 1 → 80 MHz, 12.5 ns/tick
-    cfg.mem_block_num = 1;           // 1 block = 64 items, đủ cho 16 bit DShot
+    cfg.clk_div = 1;       // clock divider = 1 → 80 MHz, 12.5 ns/tick
+    cfg.mem_block_num = 1; // 1 block = 64 items, đủ cho 16 bit DShot
     cfg.tx_config.carrier_en = false;
     cfg.tx_config.loop_en = false;
     cfg.tx_config.idle_output_en = true;
@@ -154,15 +162,18 @@ void esc_init() {
   }
 
   // Gửi lệnh disarm (throttle = 0) vài lần để ESC nhận ra DShot
-  for (int j = 0; j < 10; j++) {
-    for (int i = 0; i < 4; i++) {
+  for (int j = 0; j < 10; j++)
+  {
+    for (int i = 0; i < 4; i++)
+    {
       dshot_send_one(i, 0);
     }
     delay(10);
   }
 
   // Chờ ESC khởi tạo (thường cần 2-3 giây để nhận DShot và arm)
-  for (int j = 0; j < 300; j++) {
+  for (int j = 0; j < 300; j++)
+  {
     esc_write(ESC_IDLE, ESC_IDLE, ESC_IDLE, ESC_IDLE);
     delay(10);
   }
@@ -171,15 +182,15 @@ void esc_init() {
 
   // THÁO CÁNH rồi mở khối này để dò chân nào ra motor nào.
   // Mỗi motor sẽ quay nhẹ lần lượt theo đúng thứ tự 1 → 2 → 3 → 4.
-    esc_write(ESC_MIN_ARMED, ESC_IDLE, ESC_IDLE, ESC_IDLE); delay(4000);
-    esc_write(ESC_IDLE, ESC_MIN_ARMED, ESC_IDLE, ESC_IDLE); delay(4000);
-    esc_write(ESC_IDLE, ESC_IDLE, ESC_MIN_ARMED, ESC_IDLE); delay(4000);
-    esc_write(ESC_IDLE, ESC_IDLE, ESC_IDLE, ESC_MIN_ARMED); delay(4000);
-    esc_write(ESC_IDLE, ESC_IDLE, ESC_IDLE, ESC_IDLE);      delay(1000);
+  // esc_write(ESC_MIN_ARMED, ESC_IDLE, ESC_IDLE, ESC_IDLE); delay(4000);
+  // esc_write(ESC_IDLE, ESC_MIN_ARMED, ESC_IDLE, ESC_IDLE); delay(4000);
+  // esc_write(ESC_IDLE, ESC_IDLE, ESC_MIN_ARMED, ESC_IDLE); delay(4000);
+  // esc_write(ESC_IDLE, ESC_IDLE, ESC_IDLE, ESC_MIN_ARMED); delay(4000);
+  // esc_write(ESC_IDLE, ESC_IDLE, ESC_IDLE, ESC_IDLE);      delay(1000);
 }
 
-
-void esc_write(int m1, int m2, int m3, int m4) {
+void esc_write(int m1, int m2, int m3, int m4)
+{
   dshot_send_one(0, internal_to_dshot(m1));
   dshot_send_one(1, internal_to_dshot(m2));
   dshot_send_one(2, internal_to_dshot(m3));

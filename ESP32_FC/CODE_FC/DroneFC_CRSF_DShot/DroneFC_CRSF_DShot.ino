@@ -1,9 +1,21 @@
 // ============================================================================
-//  DroneFC_CRSF_DShot — firmware bay ESP32 (FreeRTOS)
-//  Chế độ Angle + Alt Hold
+//  DroneFC_CRSF_DShot_ManualAcc — firmware bay ESP32 (FreeRTOS)
+//  Chế độ Angle + Alt Hold — BẢN HIỆU CHỈNH GIA TỐC KẾ (ACCEL) THỦ CÔNG
 //
-//  Dựa trên mã nguồn gốc: KyThuatUAV FC — Copyright (C) 2026 Nguyễn Văn Quý
-//  Chỉnh sửa để phù hợp bộ linh kiện:
+//  Dựa trên:
+//    - DroneFC_CRSF_DShot (RP3 ELRS CRSF + GOKU G55M DShot600 + ESP32 38Pin)
+//    - Cơ chế hiệu chỉnh gia tốc kế thủ công từ KyThuatUAV_FC_level_1
+//      (Copyright (C) 2026 Nguyễn Văn Quý)
+//
+//  Mục đích bản này:
+//    - Thay thế tự động cali acc mỗi khi bật nguồn bằng cơ chế hiệu chỉnh THỦ CÔNG:
+//      Đo và lưu cố định các thông số bù lệch ACC_OFFSET_X_G, ACC_OFFSET_Y_G,
+//      ACC_OFFSET_Z_G vào mã nguồn.
+//    - Khắc phục nhược điểm của cali tự động: khi cắm pin trên địa hình dốc, gập
+//      ghềnh hoặc cầm tay, drone không bị nhận sai mặt phẳng cân bằng.
+//    - Khi khởi động, drone chỉ cali gyro (chỉ cần đứng yên, không bắt buộc phải phẳng).
+//
+//  Bộ linh kiện sử dụng:
 //    - ESP32 WROOM32 38Pin
 //    - ICM-20602 (SPI)
 //    - BMP388 (I2C)
@@ -12,12 +24,7 @@
 //    - Motor RS2205 2300KV, khung 5", cánh 5", pin 3S 2200mAh
 //    - Tay cầm Pocket Crush (ELRS 2.4GHz, EdgeTX)
 //
-//  Thay đổi chính so với bản gốc:
-//    1. RC: SBUS → CRSF (420000 baud, 8N1, không đảo tín hiệu)
-//    2. ESC: PWM 391Hz → DShot600 (giao thức số, không cần hiệu chỉnh ESC)
-//    3. Pin mapping phù hợp ESP32 WROOM32 38Pin
-//
-//  License: GPL-3.0 (giữ nguyên từ bản gốc)
+//  License: GPL-3.0
 // ============================================================================
 // ============================================================================
 //   DroneFC  —  ESP32 + ICM20602 (SPI) + BMP388 (I2C) + CRSF + DShot600
@@ -57,7 +64,7 @@
 
 // ---- Chân IMU (SPI) --------------------------------------------------------
 #define PIN_IMU_CS        5   // ICM-20602 chip select
-#define PIN_IMU_LED      14   // LED báo trạng thái hiệu chỉnh gyro
+#define PIN_IMU_LED      14   // LED báo trạng thái hiệu chỉnh gyro / cali acc
 // SPI mặc định: MOSI=23, MISO=19, SCK=18 (không cần define, SPI.begin() tự dùng)
 
 // ---- Chân CRSF RX (Radiomaster RP3 ELRS) -----------------------------------
@@ -93,8 +100,8 @@
 // ---- Giới hạn lệnh từ cần gạt ----------------------------------------------
 #define LIM_TILT_DEG           20.0f   // độ nghiêng tối đa ở chế độ angle
 #define LIM_YAW_RATE_DPS      100.0f   // tốc độ xoay tối đa, độ/giây
-#define LIM_CLIMB_RATE_CMS    100.0f   // tốc độ lên xuống tối đa, cm/giây
-#define FAILSAFE_DESCENT_CMS  -60.0f   // tốc độ hạ khi mất sóng, cm/giây
+#define LIM_CLIMB_RATE_CMS    30.0f   // tốc độ lên xuống tối đa, cm/giây
+#define FAILSAFE_DESCENT_CMS  -20.0f   // tốc độ hạ khi mất sóng, cm/giây
 
 // ---- Giới hạn DShot (0-2047) ------------------------------------------------
 // DShot giá trị 0 = disarmed, 48 = idle khi armed, 2047 = full throttle
@@ -122,8 +129,33 @@ const float I_LIM_TILT   = 200.0f,  U_LIM_TILT   = 400.0f;
 const float I_LIM_YAW    = 100.0f,  U_LIM_YAW    = 100.0f;
 const float I_LIM_CLIMB  = 700.0f,  P_LIM_CLIMB  = 200.0f;
 
-// ---- Bù lệch gia tốc kế (đơn vị g) -----------------------------------------
-// Đã chuyển sang tự động hiệu chỉnh lúc khởi động (xem imu_calibrate_accel)
+// ---- Bù lệch gia tốc kế (đơn vị g) — HIỆU CHỈNH THỦ CÔNG -------------------
+// Nguyên lý (tương tự KyThuatUAV_FC_level_1):
+//   Cách 1 (Khuyên dùng):
+//     - Bật dòng "#define CALIBRATE_ACCEL" trong phần Debug bên dưới.
+//     - Nạp code vào ESP32, mở Serial Monitor (500000 baud).
+//     - Đặt drone nằm thật phẳng trên mặt bàn tĩnh, không chạm vào.
+//     - Sau khi đếm ngược 5 giây, hệ thống đo 2000 mẫu và in ra 3 dòng bên dưới.
+//     - Copy đúng 3 dòng kết quả dán đè vào vị trí này.
+//     - Tắt (comment lại) "#define CALIBRATE_ACCEL", nạp lại code là xong.
+//   Cách 2:
+//     - Bật "#define DEBUG_ACC_OFFSET", đặt phẳng, ghi nhận X, Y, Z.
+//     - Điền thủ công: X = -giá_trị_X, Y = -giá_trị_Y, Z = 1.0 - giá_trị_Z.
+//  Hiện tượng trôi khi … | Nguyên nhân góc ước lượng | Cần can thiệp thô… | Hành động điều ch… | Ví dụ chỉnh
+//   -----------------------|---------------------------|--------------------|--------------------|---------------------
+//    Trôi về PHÍA TRƯỚC    | FC tưởng đang ngửa sau    | ACC_OFFSET_X_G     | GIẢM (trừ bớt đi)  | Từ +0.0152 →
+//    (Forward)             | (ax quá dương)            |                    |                    | +0.0052
+//    Trôi về PHÍA SAU      | FC tưởng đang chúi trước  | ACC_OFFSET_X_G     | TĂNG (cộng thêm    | Từ +0.0152 →
+//    (Backward)            | (ax quá âm)               |                    | vào)               | +0.0252
+//    Trôi sang TRÁI (Left) | FC tưởng đang nghiêng     | ACC_OFFSET_Y_G     | GIẢM (trừ bớt đi)  | Từ +0.0141 →
+//                          | phải (ay quá dương)       |                    |                    | +0.0041
+//    Trôi sang PHẢI        | FC tưởng đang nghiêng     | ACC_OFFSET_Y_G     | TĂNG (cộng thêm    | Từ +0.0141 →
+//    (Right)               | trái (ay quá âm)          |                    | vào)               | +0.0241
+
+
+#define ACC_OFFSET_X_G   +0.0112f
+#define ACC_OFFSET_Y_G   +0.0101f
+#define ACC_OFFSET_Z_G   +0.0337f
 
 // ---- Bộ lọc thông thấp bên trong ICM20602 ----------------------------------
 #define IMU_DLPF_GYRO    0x06
@@ -135,9 +167,9 @@ const float I_LIM_CLIMB  = 700.0f,  P_LIM_CLIMB  = 200.0f;
 // #define DEBUG_RATE          // tốc độ góc mong muốn so với thực tế
 // #define DEBUG_ALTITUDE      // độ cao và tốc độ lên xuống sau KF
 // #define DEBUG_RC            // giá trị các kênh tay điều khiển
- #define DEBUG_ACC_OFFSET    // để đo ACC_OFFSET_* bên trên
+// #define DEBUG_ACC_OFFSET    // để kiểm tra kết quả bù lệch (drone phẳng: X~0, Y~0, Z~1)
 // #define DEBUG_LOOP_TIME     // chu kì vòng điều khiển, phải luôn ~2000 us
-// #define CALIBRATE_ACCEL
+// #define CALIBRATE_ACCEL     // BẬT ĐỂ CHẠY HIỆU CHỈNH ACC THỦ CÔNG (dừng bay, in 3 dòng offset)
 // ============================================================================
 //                        HẾT PHẦN CẤU HÌNH
 // ============================================================================
@@ -176,6 +208,13 @@ int   tlm_flight_mode;
 bool  tlm_armed, tlm_rc_ok;
 uint32_t tlm_loop_us;
 
+// Khai báo prototype các hàm gửi Telemetry CRSF (định nghĩa trong rc_crsf.ino)
+void rc_send_telemetry_attitude(float roll_deg, float pitch_deg, float yaw_deg);
+void rc_send_telemetry_baro(float alt_m, float climb_cms);
+void rc_send_telemetry_vario(float climb_cms);
+void rc_send_telemetry_flight_mode(const char *mode_str);
+void telemetry_send();
+
 
 void setup() {
   Serial.begin(500000);
@@ -206,7 +245,7 @@ void setup() {
 
   alt_kf_init();
 
-  Serial.println("DroneFC CRSF+DShot - angle + alt hold");
+  Serial.println("DroneFC CRSF+DShot (Manual Acc Calib) - angle + alt hold");
   Serial.println("Linh kien: ESP32 WROOM32 + ICM20602 + BMP388");
   Serial.println("           RP3 ELRS (CRSF) + GOKU G55M (DShot600)");
   Serial.println("           RS2205 2300KV + 5\" frame + 3S 2200mAh");
@@ -268,8 +307,62 @@ void baro_task(void *parameter) {
     }
 
     debug_print();
+    telemetry_send();
 
     vTaskDelayUntil(&wake, pdMS_TO_TICKS(PERIOD_BARO_MS));
+  }
+}
+
+// ============================================================================
+//  Gửi Telemetry CRSF về tay cầm (Core 0, chạy trong baro_task)
+// ============================================================================
+void telemetry_send() {
+  static uint8_t step = 0;
+  static uint32_t last_tlm_ms = 0;
+  uint32_t now = millis();
+
+  // Gửi với tần số 20Hz (mỗi 50ms gửi 1 khung dữ liệu)
+  // Tần số này tối ưu với băng thông telemetry của ExpressLRS
+  if (now - last_tlm_ms < 50) return;
+  last_tlm_ms = now;
+
+  if (xSemaphoreTake(mtx_tlm, 0) != pdTRUE) return;
+  float roll      = tlm_roll_deg;
+  float pitch     = tlm_pitch_deg;
+  float alt_m     = tlm_alt_cm / 100.0f;
+  float climb_cms = tlm_climb_cms;
+  int   mode      = tlm_flight_mode;
+  xSemaphoreGive(mtx_tlm);
+
+  // Luân phiên các gói tin để tối ưu băng thông đường truyền vô tuyến
+  step = (step + 1) % 5;
+  switch (step) {
+    case 0:
+    case 3:
+      // Gửi góc nghiêng IMU (8Hz) -> EdgeTX nhận thành sensor Ptch, Roll
+      rc_send_telemetry_attitude(roll, pitch, 0.0f);
+      break;
+
+    case 1:
+      // Gửi độ cao Baro/KF (4Hz) -> EdgeTX nhận thành sensor Alt
+      rc_send_telemetry_baro(alt_m, climb_cms);
+      break;
+
+    case 2:
+      // Gửi tốc độ leo Variometer (4Hz) -> EdgeTX nhận thành sensor VSpd
+      rc_send_telemetry_vario(climb_cms);
+      break;
+
+    case 4:
+      // Gửi chế độ bay (4Hz) -> EdgeTX nhận thành sensor FM
+      if (mode == MODE_ALT_HOLD) {
+        rc_send_telemetry_flight_mode("ALTHOLD");
+      } else if (mode == MODE_FAILSAFE) {
+        rc_send_telemetry_flight_mode("FAILSAFE");
+      } else {
+        rc_send_telemetry_flight_mode("ANGLE");
+      }
+      break;
   }
 }
 
@@ -282,7 +375,7 @@ void debug_print() {
     defined(DEBUG_RC) || defined(DEBUG_ACC_OFFSET) || defined(DEBUG_LOOP_TIME)
 
   static uint32_t tick = 0;
-  if (++tick % 100) return;  // 1 dòng/giây để dễ đọc trên Serial Monitor
+  if (++tick % 20) return;  // In ở tần số ~5Hz để quan sát ổn định trên Serial Monitor
 
   if (xSemaphoreTake(mtx_tlm, 0) != pdTRUE) return;
 
@@ -310,7 +403,7 @@ void debug_print() {
   #endif
 
   #ifdef DEBUG_RC
-    Serial.printf("ch1:%d ch2:%d ch3:%d ch4:%d arm:%d mode:%d | rc_ok:%d armed:%d fm:%d | uart:%lu frame:%lu crc_err:%lu\n",
+    Serial.printf("ch1:%d ch2:%d ch3:%d ch4:%d arm:%d mode:%d | rc_ok:%d armed:%d fm:%d | uart:%lu frame:%lu crc_err:%lu \r\n",
                   tlm_rc_ch[CH_ROLL], tlm_rc_ch[CH_PITCH],
                   tlm_rc_ch[CH_THROTTLE], tlm_rc_ch[CH_YAW],
                   tlm_rc_ch[CH_ARM], tlm_rc_ch[CH_MODE],
@@ -321,9 +414,13 @@ void debug_print() {
   #endif
 
   #ifdef DEBUG_ACC_OFFSET
-    Serial.printf("ACC raw: X:%d Y:%d Z:%d | g: X:%.4f Y:%.4f Z:%.4f\n",
+    static float ax = 0, ay = 0, az = 1;
+    ax = ax * 0.98f + tlm_acc_x_g * 0.02f;
+    ay = ay * 0.98f + tlm_acc_y_g * 0.02f;
+    az = az * 0.98f + tlm_acc_z_g * 0.02f;
+    Serial.printf("ACC raw LSB: X:%6d Y:%6d Z:%6d | Filtered g: X:%+.4f Y:%+.4f Z:%+.4f \r\n",
                   imu_get_acc_x_lsb(), imu_get_acc_y_lsb(), imu_get_acc_z_lsb(),
-                  tlm_acc_x_g, tlm_acc_y_g, tlm_acc_z_g);
+                  ax, ay, az);
   #endif
 
   #ifdef DEBUG_LOOP_TIME
