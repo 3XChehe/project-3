@@ -154,8 +154,8 @@ const float I_LIM_CLIMB  = 700.0f,  P_LIM_CLIMB  = 200.0f;
 //    (Right)               | trái (ay quá âm)          |                    | vào)               | +0.0241
 
 
-#define ACC_OFFSET_X_G   +0.0092f
-#define ACC_OFFSET_Y_G   +0.0081f
+#define ACC_OFFSET_X_G   +0.00910f
+#define ACC_OFFSET_Y_G   +0.004301f
 #define ACC_OFFSET_Z_G   +0.0337f
 
 // ---- Bộ lọc thông thấp bên trong ICM20602 ----------------------------------
