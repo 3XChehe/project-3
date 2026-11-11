@@ -1,5 +1,7 @@
 # Báo cáo xử lý ManualAcc after_change
 
+> **Báo cáo lịch sử ngày 2026-10-16:** cấu hình chế độ và kết quả kiểm thử bên dưới không mặc nhiên áp dụng cho firmware MTF hiện tại. Xem [README](README.md) và [thay đổi MTF-01](THAY_DOI_MTF01_ALT_HOLD.md).
+
 Cập nhật **2026-10-16**. Sửa trực tiếp firmware trong thư mục after_change, lấy **ManualAcc gốc làm chuẩn cấu hình và luồng**, không sửa original. Chỉ thay đổi dưới Drone; không upload, chạy motor, thử bay, cài toolchain, commit hoặc push.
 
 Mục tiêu: bổ sung anti-windup ALT mà vẫn cho **ARM/cất cánh trực tiếp ALT**, không buộc dùng ANGLE. Chưa xác định được nguyên nhân duy nhất của sự cố thực; chưa biết lần đặt xuống trước đó đã ARM OFF hay chưa.

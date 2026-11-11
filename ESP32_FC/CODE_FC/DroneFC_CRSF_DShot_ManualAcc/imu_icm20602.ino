@@ -187,9 +187,9 @@ void imu_calibrate_accel() {
     Serial.println("Chep DUNG ba dong duoi day, thay vao khoi CAU HINH");
     Serial.println("trong file DroneFC_CRSF_DShot_ManualAcc.ino:");
     Serial.println();
-    Serial.printf("#define ACC_OFFSET_X_G   %+.4ff\n", -mean_x);
-    Serial.printf("#define ACC_OFFSET_Y_G   %+.4ff\n", -mean_y);
-    Serial.printf("#define ACC_OFFSET_Z_G   %+.4ff\n", 1.0f - mean_z);
+    Serial.printf("#define ACC_OFFSET_X_G   %+.5ff \r\n", -mean_x);
+    Serial.printf("#define ACC_OFFSET_Y_G   %+.5ff \r\n", -mean_y);
+    Serial.printf("#define ACC_OFFSET_Z_G   %+.5ff \r\n", 1.0f - mean_z);
     Serial.println();
     Serial.println("Xong thi TAT (comment lai) #define CALIBRATE_ACCEL roi nap lai.");
     Serial.println("Muon kiem tra: bat DEBUG_ACC_OFFSET, phai thay X~0 Y~0 Z~1.");

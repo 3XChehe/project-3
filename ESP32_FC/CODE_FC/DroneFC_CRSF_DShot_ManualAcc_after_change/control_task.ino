@@ -1,5 +1,5 @@
 // ============================================================================
-//  DroneFC_CRSF_DShot — Vòng điều khiển chính
+//  DroneFC_CRSF_DShot — Vòng điều khiển chính (Alt Hold + MTF-01)
 //  Dựa trên KyThuatUAV FC — Copyright (C) 2026 Nguyễn Văn Quý
 //  License: GPL-3.0
 // ============================================================================
@@ -16,12 +16,16 @@ uint32_t rc_frame_ms;
 bool armed = false, control_fault = false, baro_healthy = false;
 bool baro_seen = false, baro_snapshot_fault = true, vertical_inhibited = false;
 bool rc_takeover_pending = false, climb_entry = false, climb_seed_limited = false;
-bool airborne_confirmed = false, launch_aborted = false, recovery_angle_seen = false;
+bool airborne_confirmed = false, launch_aborted = false;
 bool vertical_reacquire = true;
-int arm_sw_prev = 2, recovery_mode_position = 0, last_mode_position = -1;
-int flight_mode = MODE_ANGLE;
+int arm_sw_prev = 2, recovery_mode_position = 0;
+int flight_mode = MODE_ALT_HOLD;
 float baro_alt_m, applied_collective = ESC_IDLE, degraded_throttle = ESC_MIN_ARMED;
 uint32_t baro_sample_ms, loop_period_us;
+// Dữ liệu cục bộ từ MTF-01
+MtfData mtf_local = {};
+uint32_t mtf_sample_ms = 0;
+bool mtf_healthy = false;
 VerticalReadiness vertical_readiness = {};
 AltPhase alt_phase = ALT_WAIT_TAKEOFF;
 CollectiveSource collective_source = COLLECTIVE_DIRECT;
@@ -38,11 +42,6 @@ float control_bound(float value, float lo, float hi) {
 
 bool control_vertical_mode(int mode) {
   return mode == MODE_ALT_HOLD || mode == MODE_FAILSAFE;
-}
-
-int control_requested_mode() {
-  return rc_ch[CH_MODE] == 0 ? MODE_FOR_SW_0 :
-      (rc_ch[CH_MODE] == 1 ? MODE_FOR_SW_1 : MODE_FOR_SW_2);
 }
 
 void control_task(void *parameter) {
@@ -138,7 +137,7 @@ void control_update_launch_evidence() {
     return;
   }
   if (launch_aborted || !vertical_readiness.new_sample ||
-      (flight_mode != MODE_ANGLE && alt_phase != ALT_TAKEOFF)) return;
+      alt_phase != ALT_TAKEOFF) return;
   bool rising = vertical_readiness.trend_valid && vertical_readiness.trend_cms > 0.0f &&
       vertical_readiness.altitude_m * 100.0f - takeoff_alt_cm > ALT_TAKEOFF_HEIGHT_CM;
   if (!rising) takeoff_evidence = false;
@@ -169,6 +168,7 @@ void control_step() {
   rc_ok_prev = rc_ok;
   rc_fetch_and_map();
   baro_fetch_shared();
+  mtf_fetch_shared();
   if (!control_fault) vertical_readiness_update();
   control_update_launch_evidence();
   control_update_state();
@@ -183,10 +183,11 @@ void control_step() {
     case MODE_FAILSAFE: mode_failsafe(); break;
     case MODE_DEGRADED: mode_degraded(); break;
     default:
-      collective_source = COLLECTIVE_DIRECT;
-      if (!airborne_confirmed && rc_ch[CH_THROTTLE] * 0.6f < 830.0f) pid_bleed_integrators();
-      mode_angle();
-      break;
+      control_fault = true;
+      armed = false;
+      control_disarmed_output();
+      telemetry_snapshot();
+      return;
   }
   climb_entry = false;
   if (!control_outputs_valid()) {
@@ -201,7 +202,6 @@ void control_step() {
 
 void control_update_state() {
   int previous_mode = flight_mode;
-  bool mode_changed = rc_ok && rc_ch[CH_MODE] != last_mode_position;
   if (control_fault) {
     armed = false;
     arm_sw_prev = 2;
@@ -214,16 +214,16 @@ void control_update_state() {
       armed = false;
       alt_arm_denied = false;
     } else if (!armed && arm_sw_prev != 2 && rc_ch[CH_THROTTLE] < 1150) {
-      alt_arm_denied = control_requested_mode() == MODE_ALT_HOLD && !vertical_readiness.ready;
+      alt_arm_denied = !vertical_readiness.ready;
       if (!alt_arm_denied) {
         armed = true;
         pid_reset_all();
         control_sync_commands();
         limited_collective = ramp_collective = degraded_throttle = ESC_MIN_ARMED;
-        alt_launch_session = control_requested_mode() == MODE_ALT_HOLD;
+        alt_launch_session = true;
         alt_phase = ALT_WAIT_TAKEOFF;
         takeoff_alt_cm = baro_alt_m * 100.0f;
-        flight_mode = control_requested_mode();
+        flight_mode = MODE_ALT_HOLD;
         collective_source = alt_launch_session ? COLLECTIVE_RAMP : COLLECTIVE_DIRECT;
       }
     }
@@ -232,8 +232,7 @@ void control_update_state() {
     arm_sw_prev = 2;
   }
   if (!armed) {
-    flight_mode = MODE_ANGLE;
-    last_mode_position = rc_ok ? rc_ch[CH_MODE] : -1;
+    flight_mode = MODE_ALT_HOLD;
     return;
   }
   if (!rc_ok && alt_launch_session && alt_phase == ALT_WAIT_TAKEOFF) {
@@ -243,7 +242,6 @@ void control_update_state() {
   bool vertical_ok = vertical_readiness.healthy;
   if (!vertical_ok && (airborne_confirmed || control_vertical_mode(flight_mode))) {
     vertical_inhibited = true;
-    recovery_angle_seen = false;
     if (!airborne_confirmed) launch_aborted = true;
   }
   int next_mode = flight_mode;
@@ -259,22 +257,10 @@ void control_update_state() {
       takeover = true;
     }
     if (takeover) {
-      int requested = control_requested_mode();
       if (vertical_inhibited || launch_aborted) {
-        next_mode = flight_mode == MODE_ANGLE && requested == MODE_ANGLE && !launch_aborted
-            ? MODE_ANGLE : MODE_DEGRADED;
-        if (mode_changed && requested == MODE_ANGLE) recovery_angle_seen = true;
-        if (mode_changed && requested == MODE_ALT_HOLD && recovery_angle_seen &&
-            vertical_ok && airborne_confirmed && !launch_aborted) {
-          vertical_inhibited = false;
-          recovery_angle_seen = false;
-          next_mode = MODE_ALT_HOLD;
-        }
-      } else if (requested == MODE_ALT_HOLD && flight_mode == MODE_ANGLE && !airborne_confirmed) {
-        alt_arm_denied = true;
-        next_mode = MODE_ANGLE;
+        next_mode = MODE_DEGRADED;
       } else {
-        next_mode = requested;
+        next_mode = MODE_ALT_HOLD;
         alt_arm_denied = false;
       }
     }
@@ -290,18 +276,12 @@ void control_update_state() {
   }
   if (control_vertical_mode(next_mode) && next_mode != previous_mode) climb_entry = true;
   flight_mode = next_mode;
-  if (rc_ok) last_mode_position = rc_ch[CH_MODE];
 }
 
 void control_attitude(float roll_target, float pitch_target, float yaw_target) {
   u_roll = pid_rate_roll(rate_roll_dps, pid_tilt_roll(roll_deg, roll_target));
   u_pitch = pid_rate_pitch(rate_pitch_dps, pid_tilt_pitch(pitch_deg, pitch_target));
   u_yaw = pid_rate_yaw(rate_yaw_dps, yaw_target);
-}
-
-void mode_angle() {
-  u_throttle = rc_ch[CH_THROTTLE] * 0.6f;
-  control_attitude(roll_sp_deg, pitch_sp_deg, yaw_rate_sp_dps);
 }
 
 float control_collective_rate() {
@@ -469,7 +449,7 @@ void control_disarmed_output() {
   alt_phase = ALT_WAIT_TAKEOFF;
   collective_source = COLLECTIVE_DIRECT;
   alt_launch_session = takeoff_intent = takeoff_evidence = false;
-  airborne_confirmed = launch_aborted = recovery_angle_seen = false;
+  airborne_confirmed = launch_aborted = false;
   vertical_inhibited = rc_takeover_pending = climb_entry = climb_seed_limited = false;
   limited_collective = ramp_collective = degraded_throttle = ESC_MIN_ARMED;
   takeoff_alt_cm = 0;
@@ -490,6 +470,16 @@ void baro_fetch_shared() {
   }
   baro_healthy = sensor_present.baro && baro_seen && !baro_snapshot_fault && isfinite(baro_alt_m) &&
       uint32_t(millis() - baro_sample_ms) <= BARO_FRESH_MS;
+}
+
+void mtf_fetch_shared() {
+  if (xSemaphoreTake(mtx_mtf, 0) == pdTRUE) {
+    mtf_local = shared_mtf;
+    mtf_sample_ms = shared_mtf_sample_ms;
+    xSemaphoreGive(mtx_mtf);
+  }
+  mtf_healthy = mtf_local.distance_valid &&
+      uint32_t(millis() - mtf_sample_ms) <= BARO_FRESH_MS;
 }
 
 int rc_switch_position(int value) {
@@ -586,5 +576,8 @@ void telemetry_snapshot() {
   tlm_collective_requested = u_throttle;
   tlm_collective_limited = limited_collective;
   tlm_loop_us = loop_period_us;
+  tlm_mtf = mtf_local;
+  tlm_mtf_valid = mtf_healthy;
+  tlm_mtf_sample_ms = mtf_sample_ms;
   xSemaphoreGive(mtx_tlm);
 }

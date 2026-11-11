@@ -13,6 +13,7 @@
 #ifndef DRONEFC_TYPES_H
 #define DRONEFC_TYPES_H
 
+#include <stdint.h>
 #include <driver/rmt.h>
 
 // Các kiểu dữ liệu dùng chung phải nằm trong header, không để trong file .ino.
@@ -54,6 +55,18 @@ struct BaroTiming {
 struct CrsfChannels {
   uint16_t ch[16];    // 16 kênh, giá trị 172-1811 (CRSF native)
   bool     failsafe;  // true khi receiver báo failsafe
+};
+
+// Dữ liệu từ module MTF-01 (ToF + Optical Flow)
+struct MtfData {
+  float distance_m;         // khoảng cách ToF (mét)
+  float distance_cm;        // khoảng cách ToF (cm)
+  uint8_t strength, precision, tof_status;
+  int16_t flow_x_raw;       // Giá trị thô; đơn vị và chiều chưa xác minh
+  int16_t flow_y_raw;
+  uint8_t flow_quality, flow_status;
+  uint32_t sensor_time_ms, frame_count, error_count;
+  bool distance_valid;      // chỉ kiểm tra tuổi mẫu và phạm vi
 };
 
 #endif

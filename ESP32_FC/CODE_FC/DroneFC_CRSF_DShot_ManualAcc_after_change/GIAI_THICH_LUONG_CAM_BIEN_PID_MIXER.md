@@ -1,6 +1,8 @@
 # Từ cảm biến qua PID và mixer đến motor
 
-Tài liệu giải thích **firmware DroneFC_CRSF_DShot_ManualAcc_after_change hiện tại**, đối chiếu mã ngày **2026-10-16**. Mục tiêu là hiểu dữ liệu đi đâu, công thức nào được tính và vì sao motor thay đổi ở mỗi chế độ; không phải hướng dẫn bảo đảm drone đã đủ an toàn để bay.
+> **Tài liệu lịch sử, đối chiếu mã ngày 2026-10-16; không phản ánh đầy đủ firmware MTF hiện tại.** Các phần về ANGLE, ga trực tiếp, công tắc MODE chọn chế độ và phục hồi baro bằng ANGLE→ALT không còn áp dụng. Xem [README](README.md) và [thay đổi MTF-01](THAY_DOI_MTF01_ALT_HOLD.md) cho hành vi hiện tại.
+
+Tài liệu này giải thích luồng cảm biến, PID và mixer của phiên bản tại thời điểm đối chiếu; không phải hướng dẫn bảo đảm drone đã đủ an toàn để bay.
 
 **Phân biệt ba loại nội dung:** công thức ghi “trong firmware” phản ánh mã đang có; ví dụ tính số là tình huống giả định để giải thích; mô hình vật lý là xấp xỉ, không phải thông số đã đo của drone. Khối lượng, quán tính và hệ số lực đẩy thực chưa được xác định. Không suy ra lực đẩy/RPM chỉ từ lệnh DShot. Mọi kiểm tra phần cứng trên bàn phải tháo toàn bộ cánh.
 

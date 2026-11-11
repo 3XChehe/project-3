@@ -59,4 +59,16 @@ struct CrsfChannels {
   bool     failsafe;  // true khi receiver báo failsafe
 };
 
+// Dữ liệu từ module MTF-01 (ToF + Optical Flow)
+struct MtfData {
+    float distance_m;         // khoảng cách ToF (mét)
+    float distance_cm;        // khoảng cách ToF (cm)
+    uint8_t strength, precision, tof_status;
+    int16_t flow_x_raw;       // Gia tri tho; don vi va chieu chua xac minh
+    int16_t flow_y_raw;
+    uint8_t flow_quality, flow_status;
+    uint32_t sensor_time_ms, frame_count, error_count;
+    bool distance_valid;      // chỉ kiểm tra tuổi mẫu và phạm vi
+};
+
 #endif

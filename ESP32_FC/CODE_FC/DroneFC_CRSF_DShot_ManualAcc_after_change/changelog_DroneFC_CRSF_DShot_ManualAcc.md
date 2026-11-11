@@ -1,5 +1,7 @@
 # Changelog — ManualAcc after_change
 
+> **Bản ghi lịch sử ngày 2026-10-16:** bảng cấu hình và kết quả kiểm thử bên dưới không mô tả firmware MTF hiện tại. Xem [README](README.md) và [thay đổi MTF-01](THAY_DOI_MTF01_ALT_HOLD.md) để biết hành vi hiện tại.
+
 Đối chiếu với ManualAcc gốc bên cạnh; **original chỉ đọc, không thay đổi**. Bản ghi hiện hành ngày **2026-10-16**. Kết quả test tập trung trong [báo cáo bốn mục](BAO_CAO_XU_LY_MANUALACC.md); changelog không chứng minh an toàn bay.
 
 ## 2026-10-16 — chỉnh trực tiếp after_change theo nền ManualAcc gốc

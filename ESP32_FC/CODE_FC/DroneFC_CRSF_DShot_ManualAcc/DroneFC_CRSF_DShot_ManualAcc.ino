@@ -79,6 +79,12 @@
 #define PIN_I2C_SCL      22
 #define BARO_I2C_ADDR  0x76   // BMP388, nối SDO xuống GND = 0x76, lên VCC = 0x77
 
+// ---- Chân MTF-01 (UART1) ---------------------------------------------------
+// Micoair MTF-01: module ToF + Optical Flow.
+// Cấu hình module dùng MicoLink, UART 115200 baud, 8N1; chỉ dùng telemetry.
+#define PIN_MTF_RX        4   // UART1 RX — nối tới TX của MTF-01
+#define PIN_MTF_TX       13   // UART1 TX — dự phòng (không dùng hiện tại)
+
 // ---- Kênh tay điều khiển (mapping EdgeTX mặc định) -------------------------
 // EdgeTX trên Pocket Crush gán: CH1=Aileron, CH2=Elevator, CH3=Throttle, CH4=Rudder
 // Mảng CRSF bắt đầu từ 0, nhưng ta quy ước index 1-based cho đồng nhất với code gốc
@@ -154,23 +160,57 @@ const float I_LIM_CLIMB  = 700.0f,  P_LIM_CLIMB  = 200.0f;
 //    (Right)               | trái (ay quá âm)          |                    | vào)               | +0.0241
 
 
-#define ACC_OFFSET_X_G   +0.0105f
-#define ACC_OFFSET_Y_G   +0.0041f
-#define ACC_OFFSET_Z_G   +0.0337f
+#define ACC_OFFSET_X_G   +0.030745f
+#define ACC_OFFSET_Y_G   -0.00625f
+#define ACC_OFFSET_Z_G   +0.03507375f
 
 // ---- Bộ lọc thông thấp bên trong ICM20602 ----------------------------------
 #define IMU_DLPF_GYRO    0x06
 #define IMU_DLPF_ACC     0x05
+
+// ---- CẤU HÌNH & HIỆU CHỈNH CẢM BIẾN MTF-01 (ToF Laser + Optical Flow) -------
+// 1. Cánh tay đòn (Lever Arm Vector) từ tâm IMU tới mắt MTF-01 trên khung máy bay:
+//    - Đơn vị: Mét (m). Hệ trục thân máy: X (Tiến +), Y (Phải +), Z (Xuống +).
+//    - Mục đích: Bù trừ vận tốc ảo do drone xoay/nghiêng khi cảm biến không nằm ở trọng tâm.
+//    - Nếu lắp gần tâm drone: để 0.0f.
+#define MTF_LEVER_X_M        0.0f   // Khoảng cách theo trục X (Tiến/Lùi), đơn vị mét
+#define MTF_LEVER_Y_M        0.0f   // Khoảng cách theo trục Y (Phải/Trái), đơn vị mét
+#define MTF_LEVER_Z_M        0.0f   // Khoảng cách theo trục Z (Xuống/Lên), đơn vị mét
+
+// 2. Điểm lệch tĩnh (Bias) của camera quang lưu (Optical Flow) khi drone đứng yên:
+//    - Đơn vị: Giá trị số thô (Raw LSB).
+//    - Mục đích: Khử hiện tượng trôi số cảm biến quang lưu khi đặt máy tĩnh trên bàn.
+#define MTF_FLOW_BIAS_X_RAW  0.0f   // Độ lệch điểm 0 trục X quang lưu (Raw LSB)
+#define MTF_FLOW_BIAS_Y_RAW  0.0f   // Độ lệch điểm 0 trục Y quang lưu (Raw LSB)
+
+// 3. Sai số bù độ cao ToF (Offset) và Khoảng cách chuẩn đo bằng thước (Reference):
+//    - Đơn vị: Milimét (mm).
+//    - MTF_REFERENCE_MM: Khoảng cách thực tế từ cảm biến xuống sàn đo bằng thước dây (dùng khi cali bench).
+//      + Đặt bằng 0: Khi chạy CALIBRATE_MTF sẽ chỉ đo bias Optical Flow, không tính sai số ToF.
+//      + Đặt > 0 (ví dụ 500): Kê drone cao đúng 500mm, firmware sẽ tự tính offset ToF = 500 - ToF_đo_được.
+//    - MTF_TOF_OFFSET_MM: Sai số bù độ cao (Khoảng cách chuẩn xác = Khoảng cách ToF đo được + Offset).
+#define MTF_REFERENCE_MM     0      // Khoảng cách thực tế đo bằng thước (mm) dùng khi CALIBRATE_MTF (0 = tắt đo ToF)
+#define MTF_TOF_OFFSET_MM    0.0f   // Sai số bù khoảng cách ToF (mm): Khoảng cách đúng = Đo được + Offset
+// Lưu ý: Các thông số trên hiện để phục vụ hiệu chuẩn/ghi nhận telemetry, chưa đưa vào vòng điều khiển kín.
 
 // ---- Debug ------------------------------------------------------------------
 // Mỗi lần chỉ bật MỘT dòng.
 // #define DEBUG_ATTITUDE      // góc hiện tại so với góc mong muốn
 // #define DEBUG_RATE          // tốc độ góc mong muốn so với thực tế
 // #define DEBUG_ALTITUDE      // độ cao và tốc độ lên xuống sau KF
+//#define DEBUG_MTF           // khoảng cách và optical flow MTF-01
 // #define DEBUG_RC            // giá trị các kênh tay điều khiển
 // #define DEBUG_ACC_OFFSET    // để kiểm tra kết quả bù lệch (drone phẳng: X~0, Y~0, Z~1)
 // #define DEBUG_LOOP_TIME     // chu kì vòng điều khiển, phải luôn ~2000 us
-// #define CALIBRATE_ACCEL     // BẬT ĐỂ CHẠY HIỆU CHỈNH ACC THỦ CÔNG (dừng bay, in 3 dòng offset)
+//#define CALIBRATE_ACCEL     // BẬT ĐỂ CHẠY HIỆU CHỈNH ACC THỦ CÔNG (dừng bay, in 3 dòng offset)
+ #define CALIBRATE_MTF       // Do bias tren ban; khong khoi tao ESC hoac task bay
+#if defined(CALIBRATE_MTF) && defined(CALIBRATE_ACCEL)
+#error "Chi bat mot che do hieu chuan"
+#endif
+#if !defined(DEBUG_ATTITUDE) && !defined(DEBUG_RATE) && !defined(DEBUG_ALTITUDE) && !defined(DEBUG_MTF) && \
+    !defined(DEBUG_RC) && !defined(DEBUG_ACC_OFFSET) && !defined(DEBUG_LOOP_TIME) && !defined(CALIBRATE_ACCEL)
+#define DEBUG_ACC_OFFSET
+#endif
 // ============================================================================
 //                        HẾT PHẦN CẤU HÌNH
 // ============================================================================
@@ -197,6 +237,11 @@ BaroSample shared_baro_sample = {};
 BaroTiming shared_baro_timing = {};
 bool shared_baro_new = false;
 
+// baro_task ghi (MTF-01), control_task đọc
+SemaphoreHandle_t mtx_mtf;
+MtfData shared_mtf = {};
+uint32_t shared_mtf_sample_ms = 0;
+
 // control_task ghi, baro_task và rc_task đọc
 float tlm_roll_deg, tlm_pitch_deg;
 float tlm_roll_sp_deg, tlm_pitch_sp_deg;
@@ -215,9 +260,19 @@ BaroSample tlm_baro_sample = {};
 float tlm_acc_earth_z_g, tlm_acc_bias_cms2, tlm_acc_corrected_cms2;
 uint32_t tlm_baro_age_us = UINT32_MAX;
 bool tlm_baro_healthy, tlm_baro_correction_used;
+MtfData tlm_mtf = {};
+bool tlm_mtf_valid = false;
+uint32_t tlm_mtf_sample_ms = 0;
 
 void setup() {
   Serial.begin(500000);
+#ifdef CALIBRATE_MTF
+  void mtf_calibrate();
+  mtf_init();
+  mtf_calibrate();
+  while (true)
+    delay(1000);
+#endif
   // Phải đưa CS lên HIGH ngay: ICM-20602 không hỗ trợ khởi động khi CS/SCK thấp.
   imu_init_bus();
   delay(1000); // Cho các cảm biến có thêm thời gian khởi động
@@ -243,6 +298,8 @@ void setup() {
   sensor_present.baro = baro_init();
   Serial.printf("BMP388   = %d\n", sensor_present.baro);
 
+  mtf_init();
+
   alt_kf_init();
 
   Serial.println("DroneFC CRSF+DShot (Manual Acc Calib) - angle + alt hold");
@@ -252,9 +309,10 @@ void setup() {
 
   mtx_rc   = xSemaphoreCreateMutex();
   mtx_baro = xSemaphoreCreateMutex();
+  mtx_mtf  = xSemaphoreCreateMutex();
   mtx_tlm  = xSemaphoreCreateMutex();
 
-  if (mtx_rc == NULL || mtx_baro == NULL || mtx_tlm == NULL) {
+  if (mtx_rc == NULL || mtx_baro == NULL || mtx_mtf == NULL || mtx_tlm == NULL) {
     Serial.println("Loi: khong tao duoc Mutex!");
     while (1) delay(1000);
   }
@@ -291,8 +349,29 @@ void rc_task(void *parameter) {
 
 
 // ============================================================================
-//  baro_task  —  core 0, 100Hz. Kiêm luôn việc in debug.
+//  baro_task  —  core 0, 100Hz. Đọc BMP388 + MTF-01 và in debug.
 // ============================================================================
+void mtf_publish_sample() {
+  mtf_update();
+  if (xSemaphoreTake(mtx_mtf, 0) == pdTRUE) {
+    shared_mtf.distance_m     = mtf_get_distance_m();
+    shared_mtf.distance_cm    = mtf_get_distance_cm();
+    shared_mtf.strength       = mtf_get_distance_strength();
+    shared_mtf.precision      = mtf_get_precision();
+    shared_mtf.tof_status     = mtf_get_tof_status();
+    shared_mtf.flow_status    = mtf_get_flow_status();
+    shared_mtf.sensor_time_ms = mtf_get_sample_ms();
+    shared_mtf.frame_count    = mtf_get_frame_count();
+    shared_mtf.error_count    = mtf_get_error_count();
+    shared_mtf.flow_x_raw     = mtf_get_flow_x_raw();
+    shared_mtf.flow_y_raw     = mtf_get_flow_y_raw();
+    shared_mtf.flow_quality   = mtf_get_flow_quality();
+    shared_mtf.distance_valid = mtf_is_distance_valid();
+    shared_mtf_sample_ms      = mtf_get_receive_ms();
+    xSemaphoreGive(mtx_mtf);
+  }
+}
+
 void baro_task(void *parameter) {
   TickType_t wake = xTaskGetTickCount();
   uint32_t previous_start_us = 0;
@@ -310,6 +389,7 @@ void baro_task(void *parameter) {
         xSemaphoreGive(mtx_baro);
       }
     }
+    mtf_publish_sample();
     debug_print();
     timing.prev_work_us = micros() - started_us;
     if (timing.prev_work_us > PERIOD_BARO_MS * 1000UL) timing.work_overruns++;
@@ -328,7 +408,7 @@ void baro_task(void *parameter) {
 // ============================================================================
 void debug_print() {
 #if defined(DEBUG_ATTITUDE) || defined(DEBUG_RATE) || defined(DEBUG_ALTITUDE) || \
-    defined(DEBUG_RC) || defined(DEBUG_ACC_OFFSET) || defined(DEBUG_LOOP_TIME)
+    defined(DEBUG_MTF) || defined(DEBUG_RC) || defined(DEBUG_ACC_OFFSET) || defined(DEBUG_LOOP_TIME)
 
   static uint32_t tick = 0;
   if (++tick % 20) return;  // In ở tần số ~5Hz để quan sát ổn định trên Serial Monitor
@@ -356,6 +436,15 @@ void debug_print() {
                   tlm_climb_sp_cms,
                   (tlm_flight_mode == MODE_ALT_HOLD) ? "ALT_HOLD" :
                   (tlm_flight_mode == MODE_FAILSAFE) ? "FAILSAFE" : "ANGLE");
+  #endif
+
+  #ifdef DEBUG_MTF
+    Serial.printf("[MTF] cm:%.1f range_fresh:%d age_ms:%lu strength:%u precision:%u tof_status:%u flow_x_raw:%d flow_y_raw:%d quality:%u flow_status:%u frames:%lu errors:%lu \r\n",
+                  tlm_mtf.distance_cm, tlm_mtf_valid,
+                  (unsigned long)(millis() - tlm_mtf_sample_ms), tlm_mtf.strength,
+                  tlm_mtf.precision, tlm_mtf.tof_status, tlm_mtf.flow_x_raw,
+                  tlm_mtf.flow_y_raw, tlm_mtf.flow_quality, tlm_mtf.flow_status,
+                  (unsigned long)tlm_mtf.frame_count, (unsigned long)tlm_mtf.error_count);
   #endif
 
   #ifdef DEBUG_RC

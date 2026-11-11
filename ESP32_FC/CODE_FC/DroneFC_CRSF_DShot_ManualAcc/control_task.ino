@@ -50,6 +50,11 @@ bool baro_healthy;
 bool baro_correction_used;
 uint32_t baro_age_us = UINT32_MAX;
 
+// Dữ liệu cục bộ từ MTF-01 (chỉ để telemetry / log, không dùng điều khiển)
+MtfData mtf_local = {};
+uint32_t mtf_local_sample_ms = 0;
+bool mtf_healthy = false;
+
 unsigned long failsafe_start_ms;
 uint32_t loop_period_us;
 
@@ -82,6 +87,7 @@ void control_task(void *parameter) {
 
     // KF độ cao
     baro_fetch_shared();
+    mtf_fetch_shared();
     baro_correction_used = alt_kf_update(baro_alt_m, acc_earth_z_g,
                                          baro_is_new && baro_healthy);
 
@@ -221,6 +227,16 @@ void baro_fetch_shared() {
                  baro_sample.reference_valid && age_us <= BARO_STALE_US;
 }
 
+void mtf_fetch_shared() {
+  if (xSemaphoreTake(mtx_mtf, 0) == pdTRUE) {
+    mtf_local = shared_mtf;
+    mtf_local_sample_ms = shared_mtf_sample_ms;
+    xSemaphoreGive(mtx_mtf);
+  }
+  mtf_healthy = mtf_local.distance_valid &&
+      uint32_t(millis() - mtf_local_sample_ms) <= 200U;
+}
+
 int rc_switch_position(int ch_value) {
   if      (ch_value > 900  && ch_value < 1100) return 0;
   else if (ch_value > 1400 && ch_value < 1600) return 1;
@@ -298,6 +314,10 @@ void telemetry_snapshot(uint64_t sample_time_us) {
   tlm_armed       = armed;
   tlm_rc_ok       = rc_ok;
   tlm_loop_us     = loop_period_us;
+
+  tlm_mtf = mtf_local;
+  tlm_mtf_valid = mtf_healthy;
+  tlm_mtf_sample_ms = mtf_local_sample_ms;
 
   xSemaphoreGive(mtx_tlm);
 }
