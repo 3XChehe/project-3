@@ -1,27 +1,36 @@
-// MTF-01 MicoLink UART telemetry only; do not use as a flight-control input.
+// MTF-01 Dual Protocol Driver (ho tro ca MicoLink va MSPv2 cua INAV)
+// Chi dung telemetry / log; chua tham gia vao vong dieu khien bay kin.
 #include <Arduino.h>
 #include <HardwareSerial.h>
 
 #ifndef PIN_MTF_RX
-#define PIN_MTF_RX 4
+#define PIN_MTF_RX 4 
 #endif
 #ifndef PIN_MTF_TX
-#define PIN_MTF_TX 13
+#define PIN_MTF_TX 13 
 #endif
 
 #define MTF_BAUDRATE 115200
 #define MTF_TIMEOUT_MS 200
 #define MTF_PARTIAL_TIMEOUT_MS 50
 #define MTF_MAX_BYTES_PER_UPDATE 256
-#define MTF_HEADER_SIZE 6
+
+// MicoLink protocol defines
+#define MTF_MICOLINK_START 0xEF
+#define MTF_MICOLINK_HEADER_SIZE 6
+#define MTF_MICOLINK_DATA_MSG 0x51
+
+// MSPv2 protocol defines (INAV / Betaflight)
+#define MSP2_HEADER_SIZE 8 // '$', 'X', '<', flag, cmd(2), len(2)
+#define MSP2_CMD_RANGEFINDER 0x1F01
+#define MSP2_CMD_OPTICAL_FLOW 0x1F02
+
 #define MTF_MAX_PAYLOAD 64
-#define MTF_MAX_FRAME_SIZE (MTF_HEADER_SIZE + MTF_MAX_PAYLOAD + 1)
-#define MTF_START 0xEF
-#define MTF_DATA_MSG 0x51
+#define MTF_BUF_SIZE 256
 
 HardwareSerial mtf_uart(1);
 
-static uint8_t mtf_buf[MTF_MAX_FRAME_SIZE];
+static uint8_t mtf_buf[MTF_BUF_SIZE];
 static uint8_t mtf_buf_len = 0;
 static uint32_t mtf_partial_last_ms = 0;
 static uint32_t mtf_distance_mm = 0;
@@ -34,9 +43,12 @@ static int16_t mtf_flow_y = 0;
 static uint8_t mtf_flow_qual = 0;
 static uint8_t mtf_flow_status = 0;
 static uint32_t mtf_last_frame_ms = 0;
+static uint32_t mtf_last_range_ms = 0;
+static uint32_t mtf_last_flow_ms = 0;
 static bool mtf_has_frame = false;
 static uint32_t mtf_frame_count = 0;
 static uint32_t mtf_error_count = 0;
+static uint8_t mtf_detected_protocol = 0; // 0 = none, 1 = MSPv2, 2 = MicoLink
 
 #ifdef CALIBRATE_MTF
 struct MtfCalibration {
@@ -76,6 +88,17 @@ static void mtf_calibration_sample(uint32_t now)
 }
 #endif
 
+// CRC8 DVB-S2 (poly 0xD5, init 0x00) cho giao thuc MSPv2
+static uint8_t crc8_dvb_s2(uint8_t crc, uint8_t ch)
+{
+    crc ^= ch;
+    for (int i = 0; i < 8; i++) {
+        if (crc & 0x80) crc = (crc << 1) ^ 0xD5;
+        else crc = crc << 1;
+    }
+    return crc;
+}
+
 static uint16_t mtf_read_u16(const uint8_t *p)
 {
     return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
@@ -87,9 +110,13 @@ static uint32_t mtf_read_u32(const uint8_t *p)
            ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
 
-// Retain the suffix after an invalid candidate, including any embedded 0xEF.
+// Retain the suffix after an invalid candidate.
 static void mtf_discard_prefix(uint8_t count)
 {
+    if (count >= mtf_buf_len) {
+        mtf_buf_len = 0;
+        return;
+    }
     mtf_buf_len -= count;
     for (uint8_t i = 0; i < mtf_buf_len; ++i)
         mtf_buf[i] = mtf_buf[i + count];
@@ -99,78 +126,179 @@ static bool mtf_parse_buffer(uint32_t now, bool expired)
 {
     bool got_frame = false;
 
-    // Each pass consumes bytes or waits for a bounded number of bytes.
     while (mtf_buf_len > 0)
     {
-        if (mtf_buf[0] != MTF_START)
+        // ====================================================================
+        // GIAO THUC 1: MSP v2 (INAV / Betaflight) — Preamble: '$' 'X' '<'
+        // ====================================================================
+        if (mtf_buf[0] == 0x24) // '$'
         {
-            mtf_discard_prefix(1);
-            continue;
-        }
-        if (mtf_buf_len < MTF_HEADER_SIZE)
-        {
-            if (!expired) break;
-            mtf_discard_prefix(1);
-            continue;
-        }
+            if (mtf_buf_len >= 2 && mtf_buf[1] != 0x58) { mtf_discard_prefix(1); continue; }
+            if (mtf_buf_len >= 3 && mtf_buf[2] != 0x3C) { mtf_discard_prefix(1); continue; }
+            if (mtf_buf_len < MSP2_HEADER_SIZE)
+            {
+                if (!expired) break;
+                mtf_discard_prefix(1);
+                continue;
+            }
 
-        const uint8_t payload_len = mtf_buf[5];
-        if (payload_len > MTF_MAX_PAYLOAD ||
-            (mtf_buf[3] == MTF_DATA_MSG && payload_len < 20))
-        {
-            ++mtf_error_count;
-            mtf_discard_prefix(1);
-            continue;
-        }
+            uint16_t cmd = mtf_read_u16(mtf_buf + 4);
+            uint16_t payload_len = mtf_read_u16(mtf_buf + 6);
 
-        const uint8_t frame_len = MTF_HEADER_SIZE + payload_len + 1;
-        if (mtf_buf_len < frame_len)
-        {
-            if (!expired) break;
-            mtf_discard_prefix(1);
-            continue;
-        }
+            if (payload_len > MTF_MAX_PAYLOAD)
+            {
+                ++mtf_error_count;
+                mtf_discard_prefix(1);
+                continue;
+            }
 
-        uint8_t sum = 0;
-        for (uint8_t i = 0; i < frame_len - 1; ++i)
-            sum += mtf_buf[i];
-        if (sum != mtf_buf[frame_len - 1])
-        {
-            ++mtf_error_count;
-            mtf_discard_prefix(1);
-            continue;
-        }
+            uint16_t frame_len = MSP2_HEADER_SIZE + payload_len + 1; // +1 byte CRC
+            if (mtf_buf_len < frame_len)
+            {
+                if (!expired) break;
+                mtf_discard_prefix(1);
+                continue;
+            }
 
-        if (mtf_buf[3] == MTF_DATA_MSG)
-        {
-            const uint8_t *p = mtf_buf + MTF_HEADER_SIZE;
-            mtf_sample_ms = mtf_read_u32(p);
-            mtf_distance_mm = mtf_read_u32(p + 4);
-            mtf_dist_strength = p[8];
-            mtf_precision = p[9];
-            mtf_tof_status = p[10];
-            mtf_flow_x = (int16_t)mtf_read_u16(p + 12);
-            mtf_flow_y = (int16_t)mtf_read_u16(p + 14);
-            mtf_flow_qual = p[16];
-            mtf_flow_status = p[17];
-            // Parse time, not arrival time: UART backlog can make old data look fresh.
-            mtf_last_frame_ms = now;
-            mtf_has_frame = true;
-            ++mtf_frame_count;
+            // Kiem tra CRC-8 DVB-S2 tu byte flag (index 3) den het payload
+            uint8_t crc = 0;
+            for (uint16_t i = 3; i < frame_len - 1; ++i)
+                crc = crc8_dvb_s2(crc, mtf_buf[i]);
+
+            if (crc != mtf_buf[frame_len - 1])
+            {
+                ++mtf_error_count;
+                mtf_discard_prefix(1);
+                continue;
+            }
+
+            // Frame MSPv2 hop le! Giai ma payload
+            if (mtf_detected_protocol != 1) {
+                mtf_detected_protocol = 1;
+                Serial.println(F("[MTF] Phat hien va ket noi thanh cong giao thuc MSPv2 (INAV)!"));
+            }
+
+            const uint8_t *p = mtf_buf + MSP2_HEADER_SIZE;
+            if (cmd == MSP2_CMD_RANGEFINDER && payload_len >= 5)
+            {
+                // p[0]: quality (0-255), p[1..4]: distance (mm, int32 little-endian)
+                mtf_dist_strength = p[0];
+                int32_t d = (int32_t)mtf_read_u32(p + 1);
+                if (d >= 0) mtf_distance_mm = (uint32_t)d;
+                mtf_tof_status = (p[0] > 0 ? 1 : 0);
+                mtf_precision = p[0];
+                mtf_sample_ms = now;
+                mtf_last_frame_ms = now;
+                mtf_last_range_ms = now;
+                mtf_has_frame = true;
+                ++mtf_frame_count;
+                got_frame = true;
+            }
+            else if (cmd == MSP2_CMD_OPTICAL_FLOW && payload_len >= 9)
+            {
+                // p[0]: quality, p[1..4]: motionX (int32), p[5..8]: motionY (int32)
+                mtf_flow_qual = p[0];
+                mtf_flow_x = (int16_t)(int32_t)mtf_read_u32(p + 1);
+                mtf_flow_y = (int16_t)(int32_t)mtf_read_u32(p + 5);
+                mtf_flow_status = (p[0] > 0 ? 1 : 0);
+                mtf_sample_ms = now;
+                mtf_last_frame_ms = now;
+                mtf_last_flow_ms = now;
+                mtf_has_frame = true;
+                ++mtf_frame_count;
 #ifdef CALIBRATE_MTF
-            mtf_calibration_sample(now);
+                if (mtf_distance_mm >= 10)
+                    mtf_calibration_sample(now);
 #endif
-            got_frame = true;
+                got_frame = true;
+            }
+
+            mtf_discard_prefix(frame_len);
+            continue;
         }
-        // Other checksum-valid MicoLink message IDs are ignored, not errors.
-        mtf_discard_prefix(frame_len);
+
+        // ====================================================================
+        // GIAO THUC 2: MicoLink — Preamble: 0xEF
+        // ====================================================================
+        if (mtf_buf[0] == MTF_MICOLINK_START)
+        {
+            if (mtf_buf_len < MTF_MICOLINK_HEADER_SIZE)
+            {
+                if (!expired) break;
+                mtf_discard_prefix(1);
+                continue;
+            }
+
+            const uint8_t payload_len = mtf_buf[5];
+            if (payload_len > MTF_MAX_PAYLOAD ||
+                (mtf_buf[3] == MTF_MICOLINK_DATA_MSG && payload_len < 20))
+            {
+                ++mtf_error_count;
+                mtf_discard_prefix(1);
+                continue;
+            }
+
+            const uint8_t frame_len = MTF_MICOLINK_HEADER_SIZE + payload_len + 1;
+            if (mtf_buf_len < frame_len)
+            {
+                if (!expired) break;
+                mtf_discard_prefix(1);
+                continue;
+            }
+
+            uint8_t sum = 0;
+            for (uint8_t i = 0; i < frame_len - 1; ++i)
+                sum += mtf_buf[i];
+            if (sum != mtf_buf[frame_len - 1])
+            {
+                ++mtf_error_count;
+                mtf_discard_prefix(1);
+                continue;
+            }
+
+            if (mtf_detected_protocol != 2) {
+                mtf_detected_protocol = 2;
+                Serial.println(F("[MTF] Phat hien va ket noi thanh cong giao thuc MicoLink!"));
+            }
+
+            if (mtf_buf[3] == MTF_MICOLINK_DATA_MSG)
+            {
+                const uint8_t *p = mtf_buf + MTF_MICOLINK_HEADER_SIZE;
+                mtf_sample_ms = mtf_read_u32(p);
+                mtf_distance_mm = mtf_read_u32(p + 4);
+                mtf_dist_strength = p[8];
+                mtf_precision = p[9];
+                mtf_tof_status = p[10];
+                mtf_flow_x = (int16_t)mtf_read_u16(p + 12);
+                mtf_flow_y = (int16_t)mtf_read_u16(p + 14);
+                mtf_flow_qual = p[16];
+                mtf_flow_status = p[17];
+                mtf_last_frame_ms = now;
+                mtf_last_range_ms = now;
+                mtf_last_flow_ms = now;
+                mtf_has_frame = true;
+                ++mtf_frame_count;
+#ifdef CALIBRATE_MTF
+                mtf_calibration_sample(now);
+#endif
+                got_frame = true;
+            }
+            mtf_discard_prefix(frame_len);
+            continue;
+        }
+
+        // Byte khong phai mo dau cua bat ky giao thuc nao
+        mtf_discard_prefix(1);
     }
     return got_frame;
 }
 
 static bool mtf_process_byte(uint8_t b, uint32_t now)
 {
-    if (mtf_buf_len == 0 && b != MTF_START) return false;
+    if (mtf_buf_len == 0 && b != MTF_MICOLINK_START && b != 0x24) return false;
+    if (mtf_buf_len >= sizeof(mtf_buf)) {
+        mtf_discard_prefix(1);
+    }
     mtf_buf[mtf_buf_len++] = b;
     mtf_partial_last_ms = now;
     return mtf_parse_buffer(now, false);
@@ -180,7 +308,6 @@ void mtf_init()
 {
     mtf_uart.setRxBufferSize(256);
     mtf_uart.begin(MTF_BAUDRATE, SERIAL_8N1, PIN_MTF_RX, PIN_MTF_TX);
-    // Bound initialization even if the sensor transmits continuously.
     for (unsigned int i = 0; i < MTF_MAX_BYTES_PER_UPDATE && mtf_uart.available() > 0; ++i)
         mtf_uart.read();
     mtf_buf_len = 0;
@@ -195,13 +322,14 @@ void mtf_init()
     mtf_flow_qual = 0;
     mtf_flow_status = 0;
     mtf_last_frame_ms = 0;
+    mtf_last_range_ms = 0;
+    mtf_last_flow_ms = 0;
     mtf_has_frame = false;
     mtf_frame_count = 0;
     mtf_error_count = 0;
+    mtf_detected_protocol = 0;
 }
 
-// Call frequently enough to avoid UART overflow and stale buffered samples.
-// A partial-frame timeout uses processing time, not actual byte arrival time.
 bool mtf_update()
 {
     bool got_frame = false;
@@ -234,17 +362,13 @@ uint8_t mtf_get_flow_status() { return mtf_flow_status; }
 uint32_t mtf_get_sample_ms() { return mtf_sample_ms; }
 uint32_t mtf_get_receive_ms() { return mtf_last_frame_ms; }
 
-// This is only a freshness/range test for telemetry. Status and strength
-// semantics have not been verified and are deliberately not interpreted.
 bool mtf_is_distance_valid()
 {
     return mtf_has_frame &&
-           (uint32_t)(millis() - mtf_last_frame_ms) <= MTF_TIMEOUT_MS &&
+           (uint32_t)(millis() - mtf_last_range_ms) <= MTF_TIMEOUT_MS &&
            mtf_distance_mm >= 10 && mtf_distance_mm <= 8000;
 }
 
-// Frames count decoded 0x51 messages; errors count malformed lengths,
-// checksum failures and partial-frame timeouts (not ignored message IDs).
 uint32_t mtf_get_frame_count() { return mtf_frame_count; }
 uint32_t mtf_get_error_count() { return mtf_error_count; }
 
@@ -258,6 +382,7 @@ void mtf_calibrate()
         Serial.println("[MTF CAL] THAT BAI: khoang cach chuan phai la 0 hoac 10..8000 mm.");
         return;
     }
+
     for (int i = 5; i > 0; --i) {
         Serial.printf("[MTF CAL] Bat dau sau %d giay\n", i);
         uint32_t second_start = millis();
@@ -299,7 +424,7 @@ void mtf_calibrate()
                   distance, (unsigned long)mtf_cal.min_distance, (unsigned long)mtf_cal.max_distance,
                   mtf_flow_qual, mtf_flow_status, mtf_dist_strength, mtf_precision, mtf_tof_status);
     Serial.println("[MTF CAL] Uoc luong chua xac minh do dung yen, don vi flow hay do moi frame; lap lai truoc khi su dung.");
-    Serial.printf("#define MTF_FLOW_BIAS_X_RAW %.3ff\n#define MTF_FLOW_BIAS_Y_RAW %.3ff\n", x, y);
+    Serial.printf("#define MTF_FLOW_BIAS_X_RAW %.3ff \r\n#define MTF_FLOW_BIAS_Y_RAW %.3ff \r\n", x, y);
     if (MTF_REFERENCE_MM != 0)
         Serial.printf("#define MTF_TOF_OFFSET_MM %.3ff\n", (double)MTF_REFERENCE_MM - distance);
     else
